@@ -1,0 +1,29 @@
+# 密钥 / 本地配置
+scripts/.llmkey
+data/keys.js
+
+# 日志与构建中间产物
+scripts/*.log
+scripts/handbook_gen.json
+scripts/units_for_llm.json
+scripts/regen_ids.json
+
+# 数据备份
+data/*.bak
+data/*.bak2
+data/*.bak3
+data/*.bak*
+复习进度备份.json
+
+# 源资料（大体积，归档目录）
+资料/
+
+# 归档备份
+备份/
+
+# 发布产物
+发布/
+
+# Python
+__pycache__/
+*.pyc
