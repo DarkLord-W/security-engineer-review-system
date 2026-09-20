@@ -234,7 +234,7 @@ window.onerror = function(m, s, l){ var e=document.getElementById('errbox'); e.s
 /* ================= 存储层 ================= */
 var LS_KEY='se_progress_v2', LS_IMP='se_import_v1', LS_SET='se_settings_v2', LS_SNAP='se_snapshot_v1';
 var KEYS = window.SE_KEYS || {};
-function defaultSettings(){ return {dsKey:'', glmKey:'', dsModel:'deepseek-chat', glmModel:'glm-4.7-flash', provider:'deepseek', newPerDay:20, kScope:'all', qMode:'quiz', examDate:'2026-10-24', pageWidth:1200, wrongN:20, wrongOrder:'random', wrongMaster:2}; }
+function defaultSettings(){ return {dsKey:'', glmKey:'', dsModel:'deepseek-chat', glmModel:'glm-4.7-flash', provider:'deepseek', newPerDay:20, kScope:'all', qMode:'quiz', examDate:'2026-10-24', pageWidth:1200, wrongN:20, wrongOrder:'random', wrongMaster:2, planMode:'auto', planRedo:true}; }
 function defaultStore(){ return {version:2, rec:{}, caseRec:{}, srs:{}, daily:{}, aiCache:{}, exams:[], hb:{}, hbCalc:{}, explain:{}, settings:defaultSettings()}; }
 function settingsFromFile(){
   var s = {};
@@ -1107,11 +1107,125 @@ function vHome(){
 /* ================= 冲刺计划 ================= */
 function dayNum(s){ var p = String(s).split('-'); return new Date(+p[0], +p[1]-1, +p[2]).getTime(); }
 function isBeforeToday(s){ var t = new Date(); return dayNum(s) < new Date(t.getFullYear(), t.getMonth(), t.getDate()).getTime(); }
+function dateAdd(s, n){
+  var p = String(s).split('-');
+  var d = new Date(+p[0], +p[1]-1, +p[2]);
+  d.setDate(d.getDate()+n);
+  return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate();
+}
+function fmtMD(s){ var p = String(s).split('-'); return (+p[1])+'/'+(+p[2]); }
+function planModeVal(){ return (store.settings||{}).planMode || 'auto'; }
+function planRedoVal(){ var v = (store.settings||{}).planRedo; return v===undefined? true : !!v; }
+function setPlanMode(m){ store.settings.planMode = m; saveSettings(); vPlan(); }
+function setPlanRedo(v){ store.settings.planRedo = !!v; saveSettings(); vPlan(); }
+function dynPlan(){
+  var t = today();
+  var exam = examDateStr();
+  var examNum = dayNum(exam), tNum = dayNum(t);
+  var res = {ended:false, days:[], firstPass:[], unscheduled:[], overdueN:0, perDay:0, remainDays:Math.max(0, Math.round((examNum-tNum)/86400000)), redoN:0, redoOn:planRedoVal(), exam:exam};
+  if(tNum > dayNum(dateAdd(exam,3))){ res.ended = true; return res; }
+  var mock1 = dateAdd(exam,-13), mock2 = dateAdd(exam,-6), mock3 = dateAdd(exam,-3);
+  var lastCase = dateAdd(exam,-7);
+  var sprintA = dateAdd(exam,-5), sprintB = dateAdd(exam,-4);
+  var finalA = dateAdd(exam,-2), finalB = dateAdd(exam,-1);
+  var seen = {}, firstPass = [];
+  PLAN.schedule.forEach(function(d){
+    (d.cases||[]).forEach(function(cid){
+      if(seen[cid]) return; seen[cid]=1;
+      if(caseState(cid).state!=='done') firstPass.push(cid);
+    });
+  });
+  res.firstPass = firstPass;
+  var seen2 = {}, over = 0;
+  PLAN.schedule.forEach(function(d){
+    if(!isBeforeToday(d.date)) return;
+    (d.cases||[]).forEach(function(cid){
+      if(seen2[cid]) return; seen2[cid]=1;
+      if(caseState(cid).state!=='done') over++;
+    });
+  });
+  res.overdueN = over;
+  var redo = [], rseen = {};
+  PLAN.schedule.forEach(function(d){
+    if(!/二刷|默写20/.test(d.task||'')) return;
+    (d.cases||[]).forEach(function(cid){
+      if(rseen[cid]) return; rseen[cid]=1;
+      if(caseState(cid).state==='done') redo.push(cid);
+    });
+  });
+  res.redoN = redo.length;
+  var days = [], cur = t;
+  while(dayNum(cur) <= dayNum(lastCase)){ if(cur!==mock1) days.push(cur); cur = dateAdd(cur,1); }
+  var assign = {}; days.forEach(function(dd){ assign[dd] = []; });
+  var left = firstPass.slice();
+  for(var i=0;i<days.length && left.length;i++){
+    var n = Math.ceil(left.length / (days.length - i));
+    assign[days[i]] = left.splice(0, n);
+  }
+  res.unscheduled = left;
+  res.perDay = days.length? Math.ceil(firstPass.length/days.length) : firstPass.length;
+  var redoAssign = {};
+  if(res.redoOn && redo.length){
+    var r1 = Math.ceil(redo.length/2);
+    redoAssign[sprintA] = redo.slice(0, r1);
+    redoAssign[sprintB] = redo.slice(r1);
+  }
+  var out = [], dd = t;
+  while(dayNum(dd) <= dayNum(dateAdd(exam,3))){
+    var e = null;
+    if(assign[dd]) e = {date:dd, kind:'study', cases:assign[dd]};
+    else if(dd===mock1) e = {date:dd, kind:'mock', exam:'P-2024-2-2', task:'模考1：2024下半年整卷 150分钟 + 复盘'};
+    else if(dd===mock2) e = {date:dd, kind:'mock', exam:'P-2022-2-2', task:'模考2：2022下半年整卷 + 复盘'};
+    else if(dd===mock3) e = {date:dd, kind:'mock', exam:'P-2021-2-2', task:'模考3：2021下半年整卷 + 复盘'};
+    else if(dd===sprintA || dd===sprintB) e = {date:dd, kind:'redo', cases:redoAssign[dd]||[], task:(redoAssign[dd]&&redoAssign[dd].length)? '二刷（盖答案，只看错题与模糊题）':'错题本 + 默写清单'};
+    else if(dd===finalA) e = {date:dd, kind:'final', task:'错题本清零 + 万能话术 + 计算卡'};
+    else if(dd===finalB) e = {date:dd, kind:'final', task:'轻复习：默写清单速过 + 计算卡，早睡'};
+    else if(dayNum(dd) >= examNum) e = {date:dd, kind:'exam', task: dd===exam? '🎯 考试日（科目一 9:00-11:30 / 科目二 14:00-16:30）' : '考试周（保持状态，轻量复习）'};
+    if(e) out.push(e);
+    dd = dateAdd(dd,1);
+  }
+  res.days = out;
+  return res;
+}
 function dayComplete(d){
   if(!d.cases || !d.cases.length) return true;
   return d.cases.every(function(cid){ return caseState(cid).state==='done'; });
 }
 function planHomeCard(){
+  if(planModeVal()==='auto'){
+    var dp = dynPlan();
+    var te = null;
+    dp.days.forEach(function(e){ if(e.date===today()) te = e; });
+    var h2 = '<div class="card" style="border-left:4px solid var(--pri)"><div class="row" style="justify-content:space-between">'
+      +'<h2 style="margin:0">📅 今日冲刺任务</h2>'
+      +'<span class="muted">动态重排 · 剩余 '+dp.remainDays+' 天 · <span class="pcase" onclick="go(\'plan\')">查看全计划</span></span></div>';
+    if(dp.ended){
+      h2 += '<p class="muted" style="margin-top:6px">考试已结束（'+examDateText()+'），自由复习：优先错题本与默写清单。</p>';
+    } else if(te){
+      if(te.cases && te.cases.length){
+        h2 += '<div class="row" style="margin-top:8px">';
+        te.cases.forEach(function(cid){
+          var c = DB.cases[cid]; if(!c) return;
+          h2 += '<span style="margin-right:12px"><span class="pcase" onclick="openCase(\''+cid+'\')"><span class="tag s2">'+c.year+halfName(c.half)+'</span>试题'+c.cn+(c.title?' '+esc(c.title):'')+'</span>'+planCaseStateHTML(cid)+caseDots(cid)+'</span>';
+        });
+        h2 += '</div>';
+        h2 += '<p class="muted" style="margin-top:6px">'+esc(te.task||'')+'</p>';
+      } else {
+        h2 += '<p style="margin-top:6px"><b>'+esc(te.task||'')+'</b></p>';
+      }
+      if(te.exam){
+        var ep = DB.papers.find(function(x){ return x.id===te.exam; });
+        if(ep) h2 += '<div class="row" style="margin-top:8px"><button class="btn sm pri" onclick="startExam(\''+te.exam+'\')">🎬 开始模考 '+esc(ep.title)+'</button></div>';
+      }
+    } else {
+      h2 += '<p class="muted" style="margin-top:6px">今日无排期任务，自由复习：优先错题本与默写清单。</p>';
+    }
+    if(!dp.ended && dp.firstPass.length){
+      h2 += '<p style="margin-top:8px;color:'+(dp.perDay>3?'var(--warn)':'var(--tx2)')+'">📌 首轮未完成 '+dp.firstPass.length+' 题'+(dp.perDay? '，建议每天约 '+dp.perDay+' 题':'')+'（已自动顺延）</p>';
+    }
+    h2 += '</div>';
+    return h2;
+  }
   var day = planDay();
   var dayIdx = PLAN.schedule.findIndex(function(d){ return d.date===today(); });
   var h = '<div class="card" style="border-left:4px solid var(--pri)"><div class="row" style="justify-content:space-between">'
@@ -1169,46 +1283,86 @@ function dayStats(d){
   return {tot:tot, done:done, ans:ans};
 }
 function vPlan(){
-  var phases = {
-    1:'① 近3年12题 · 必背原型（9/17-9/22）',
-    2:'② 预测池10题 · 高概率复刻（9/23-9/27）',
-    3:'③ 旧题全覆盖 · 2016-2022（9/28-10/9）',
-    4:'④ 二轮错题 + 模考（10/10-10/18）',
-    5:'⑤ 考前冲刺（10/19-10/23）'
-  };
   var totalCases = 0, doneCases = 0, ansCases = 0;
   PLAN.schedule.forEach(function(d){ (d.cases||[]).forEach(function(cid){ totalCases++; var st=caseState(cid); if(st.state==='done') doneCases++; if(st.state!=='none') ansCases++; }); });
   var pctDone = totalCases? Math.round(doneCases/totalCases*100) : 0;
-  var h = '<div class="card"><h2>📅 37天案例冲刺计划</h2>'
+  var auto = planModeVal()==='auto';
+  var h = '<div class="card"><div class="row" style="justify-content:space-between"><h2 style="margin:0">📅 案例冲刺计划</h2>'
+    +'<div class="row"><button class="btn sm '+(auto?'pri':'')+'" onclick="setPlanMode(\'auto\')">动态重排</button>'
+    +'<button class="btn sm '+(!auto?'pri':'')+'" onclick="setPlanMode(\'fixed\')">原计划</button>'
+    +(auto? '<button class="btn sm '+(planRedoVal()?'pri':'')+'" onclick="setPlanRedo('+(planRedoVal()?'false':'true')+')">二刷：'+(planRedoVal()?'开':'关')+'</button>':'')
+    +'</div></div>'
     +'<div class="row"><div class="stat"><b>'+daysToExam()+'</b><span>距考试天数</span></div>'
     +'<div class="stat g"><b>'+doneCases+'/'+totalCases+'</b><span>完成（自评口径·含二刷）</span></div>'
     +'<div class="stat"><b>'+ansCases+'/'+totalCases+'</b><span>已答（含二刷）</span></div>'
     +'<div class="stat o"><b>'+wrongList().filter(function(k){ return k.indexOf('#')>0; }).length+'</b><span>案例错题待清</span></div></div>'
     +'<div class="bar" style="margin-top:8px"><i style="width:'+pctDone+'%"></i></div>'
-    +'<p class="muted" style="margin-top:8px">每天：默写→对答案→自评「会/模糊/不会」；<b>每小问自评后计为完成</b>，错题进错题本，二轮只刷错题。考试日 10/24-10/27。 · <span class="pcase" onclick="go(\'sprint\')">📐 打开冲刺手册</span></p>'
     +'<p class="planlegend">图例：<i class="dot none"></i>未做 <i class="dot ans"></i>已答待自评 <i class="dot ok"></i>会 <i class="dot mid"></i>模糊 <i class="dot no"></i>不会</p></div>';
-  h += '<div class="card">';
-  var curPhase = 0;
-  PLAN.schedule.forEach(function(d){
-    if(d.phase!==curPhase){ curPhase = d.phase; h += '<div class="phase-hd">'+phases[d.phase]+'</div>'; }
-    var ds = dayStats(d);
-    var overCls = '';
-    if(isBeforeToday(d.date) && !dayComplete(d)) overCls = ds.ans===ds.tot? ' overdue-todo' : ' overdue';
-    var cls = 'pday' + (d.date===today()?' today':'') + overCls;
-    var dayProg = ds.tot? '<br><span class="pdayprog'+(ds.done===ds.tot?' full':'')+'">'+ds.done+'/'+ds.tot+' 完成</span>' : '';
-    h += '<div class="'+cls+'"><div class="dt">'+d.date.replace('2026-','')+'<br>'+esc(d.task||'')+dayProg+'</div><div style="flex:1">';
-    if(d.cases && d.cases.length){
-      d.cases.forEach(function(cid){
-        var c = DB.cases[cid]; if(!c) return;
-        h += '<span style="margin-right:12px"><span class="pcase" onclick="openCase(\''+cid+'\')"><span class="tag s2">'+c.year+halfName(c.half)+'</span>试题'+c.cn+(c.title?' '+esc(c.title):'')+'</span>'+planCaseStateHTML(cid)+caseDots(cid)+'</span>';
-      });
-    } else {
-      h += '<span>'+esc(d.task||'')+'</span>'+(d.exam? ' <button class="btn sm" onclick="startExam(\''+d.exam+'\')">开始模考</button>':'');
+  if(auto){
+    var dp = dynPlan();
+    if(dp.ended){
+      h += '<div class="card"><p style="margin:0">考试已结束（'+examDateText()+'）。自由复习：优先错题本与默写清单。 · <span class="pcase" onclick="go(\'sprint\')">📐 打开冲刺手册</span></p></div>';
+      view.innerHTML = h; return;
     }
-    if(d.focus) h += '<div class="muted" style="margin-top:2px">🎯 '+esc(d.focus)+'</div>';
-    h += '</div></div>';
-  });
-  h += '</div>';
+    var undoneN = dp.firstPass.length;
+    var msgs = [];
+    if(dp.overdueN) msgs.push('原计划中 '+dp.overdueN+' 题已过期，已自动顺延');
+    if(undoneN) msgs.push('首轮未完成 '+undoneN+' 题 · 剩余 '+dp.remainDays+' 天 · 建议每天约 '+dp.perDay+' 题');
+    else msgs.push('✅ 首轮全覆盖完成'+(dp.redoOn&&dp.redoN? ' · 二刷 '+dp.redoN+' 题已排入 '+fmtMD(dateAdd(dp.exam,-5))+'~'+fmtMD(dateAdd(dp.exam,-4)) : ''));
+    if(undoneN && dp.perDay>3) msgs.push('⚠ 每日任务偏重，建议优先 T0/T1，T2 可选做');
+    if(dp.unscheduled.length) msgs.push('⚠ 仍有 '+dp.unscheduled.length+' 题排不进首轮，建议只挑 T0/T1 过一遍');
+    var warnColor = (undoneN && (dp.perDay>3 || dp.unscheduled.length))? 'var(--warn)' : 'var(--tx2)';
+    h += '<div class="card"><p style="margin:0;color:'+warnColor+'">'+msgs.map(esc).join('<br>')+'</p>'
+      +'<p class="muted" style="margin-top:6px">动态重排：只排<b>未完成</b>的题（T0→T1→T2 优先级），按剩余天数均摊；模考与考前冲刺日固定。每小问自评后计为完成。 · <span class="pcase" onclick="go(\'sprint\')">📐 打开冲刺手册</span></p></div>';
+    h += '<div class="card">';
+    dp.days.forEach(function(e){
+      var ds = dayStats(e);
+      var label = e.kind==='study'? '首轮' : (e.kind==='mock'? '模考' : (e.kind==='redo'? ((e.cases&&e.cases.length)? '二刷':'默写') : (e.kind==='final'? '冲刺' : '考试')));
+      var dayProg = ds.tot? '<br><span class="pdayprog'+(ds.done===ds.tot?' full':'')+'">'+ds.done+'/'+ds.tot+' 完成</span>' : '';
+      h += '<div class="pday'+(e.date===today()?' today':'')+'"><div class="dt">'+fmtMD(e.date)+'<br>'+label+dayProg+'</div><div style="flex:1">';
+      if(e.cases && e.cases.length){
+        e.cases.forEach(function(cid){
+          var c = DB.cases[cid]; if(!c) return;
+          h += '<span style="margin-right:12px">'+tierTag(cid)+'<span class="pcase" onclick="openCase(\''+cid+'\')"><span class="tag s2">'+c.year+halfName(c.half)+'</span>试题'+c.cn+(c.title?' '+esc(c.title):'')+'</span>'+planCaseStateHTML(cid)+caseDots(cid)+'</span>';
+        });
+      } else {
+        h += '<span>'+esc(e.task||'')+'</span>'+(e.exam? ' <button class="btn sm" onclick="startExam(\''+e.exam+'\')">开始模考</button>':'');
+      }
+      h += '</div></div>';
+    });
+    h += '</div>';
+  } else {
+    var phases = {
+      1:'① 近3年12题 · 必背原型（9/17-9/22）',
+      2:'② 预测池10题 · 高概率复刻（9/23-9/27）',
+      3:'③ 旧题全覆盖 · 2016-2022（9/28-10/9）',
+      4:'④ 二轮错题 + 模考（10/10-10/18）',
+      5:'⑤ 考前冲刺（10/19-10/23）'
+    };
+    h += '<div class="card"><p class="muted" style="margin:0">原计划为理想日历（9/17-10/23）；每天：默写→对答案→自评「会/模糊/不会」，<b>每小问自评后计为完成</b>。落下的任务不会自动顺延，可切到「动态重排」查看顺延安排。考试日 '+examDateText()+'。 · <span class="pcase" onclick="go(\'sprint\')">📐 打开冲刺手册</span></p></div>';
+    h += '<div class="card">';
+    var curPhase = 0;
+    PLAN.schedule.forEach(function(d){
+      if(d.phase!==curPhase){ curPhase = d.phase; h += '<div class="phase-hd">'+phases[d.phase]+'</div>'; }
+      var ds = dayStats(d);
+      var overCls = '';
+      if(isBeforeToday(d.date) && !dayComplete(d)) overCls = ds.ans===ds.tot? ' overdue-todo' : ' overdue';
+      var cls = 'pday' + (d.date===today()?' today':'') + overCls;
+      var dayProg = ds.tot? '<br><span class="pdayprog'+(ds.done===ds.tot?' full':'')+'">'+ds.done+'/'+ds.tot+' 完成</span>' : '';
+      h += '<div class="'+cls+'"><div class="dt">'+d.date.replace('2026-','')+'<br>'+esc(d.task||'')+dayProg+'</div><div style="flex:1">';
+      if(d.cases && d.cases.length){
+        d.cases.forEach(function(cid){
+          var c = DB.cases[cid]; if(!c) return;
+          h += '<span style="margin-right:12px"><span class="pcase" onclick="openCase(\''+cid+'\')"><span class="tag s2">'+c.year+halfName(c.half)+'</span>试题'+c.cn+(c.title?' '+esc(c.title):'')+'</span>'+planCaseStateHTML(cid)+caseDots(cid)+'</span>';
+        });
+      } else {
+        h += '<span>'+esc(d.task||'')+'</span>'+(d.exam? ' <button class="btn sm" onclick="startExam(\''+d.exam+'\')">开始模考</button>':'');
+      }
+      if(d.focus) h += '<div class="muted" style="margin-top:2px">🎯 '+esc(d.focus)+'</div>';
+      h += '</div></div>';
+    });
+    h += '</div>';
+  }
   view.innerHTML = h;
 }
 
