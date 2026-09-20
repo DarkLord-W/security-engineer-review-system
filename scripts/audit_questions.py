@@ -50,12 +50,15 @@ def main():
         for s in c["qs"]:
             nsub += 1
             tag = "%s#%s" % (cid, s.get("no"))
-            if not (s.get("text") or "").strip():
+            t = s.get("text") or ""
+            if not t.strip():
                 issues.append("[案例] %s 缺题干" % tag)
             if not (s.get("answer") or "").strip():
                 issues.append("[案例] %s 缺答案" % tag)
-            if "【答案】" in (s.get("text") or ""):
+            if "【答案】" in t:
                 warns.append("[案例] %s 题干内含【答案】(疑似合并块)" % tag)
+            if re.search(r"【问题\s*\d+\s*至问题", t) or len(re.findall(r"问题\s*\d+\s*[.．、）)]", t)) >= 2:
+                issues.append("[案例] %s 疑似合并题块（应拆分为独立小题）" % tag)
 
     meta = cards.get("meta", {})
     for k in list(meta.get("cunit", {})) + list(meta.get("cunitX", {})):

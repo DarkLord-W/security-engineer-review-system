@@ -229,6 +229,8 @@ details summary{cursor:pointer;color:var(--pri);font-size:13.5px;margin:6px 0}
 <script src="data/explain.js" onerror="this.remove()"></script>
 <script>
 'use strict';
+var APP_VER = 'v1.4';
+console.log('信息安全工程师复习系统 ' + APP_VER);
 window.onerror = function(m, s, l){ var e=document.getElementById('errbox'); e.style.display='block'; e.textContent += m+' @'+l+'\n'; };
 
 /* ================= 存储层 ================= */
@@ -2858,6 +2860,7 @@ function vSettings(){
     +' &nbsp; Key 来源: '+(src.file? '<span class="tag s1">data/keys.js</span>':'')+(src.local? '<span class="tag gray">浏览器设置</span>':'')+((src.file||src.local)?'':'<span class="tag warn">未配置</span>')+'</div>'
     +'<div class="muted" style="margin-top:4px">当前可用: '+(avail.length? avail.map(function(p){ return esc(p.name+' / '+p.model+' ('+maskKey(p.key)+')'); }).join('；') : '<span class="tag warn">无可用 Key，请在下方填写，或检查 data/keys.js 是否存在</span>')+'</div>'
     +(src.file? '<div class="muted" style="margin-top:4px">data/keys.js 提供兜底 Key，浏览器设置优先；换浏览器/换电脑打开也能直接使用 AI。</div>':'')
+    +'<div class="muted" style="margin-top:4px">版本: <b>'+APP_VER+'</b> · 数据: 题库 v'+((window.DB||{}).version||'?')+' / 知识卡 v'+((window.CARDS||{}).version||'?')+' / 手册 v'+((window.HANDBOOK||{}).version||'?')+'</div>'
     +'</div>'
     +'<div class="row" style="margin:10px 0"><span>优先使用:</span>'
     +'<select id="prov" onchange="setProvider(this.value)"><option value="deepseek" '+(s.provider==='deepseek'?'selected':'')+'>DeepSeek</option><option value="glm" '+(s.provider==='glm'?'selected':'')+'>GLM(智谱)</option></select>'
