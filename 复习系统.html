@@ -431,11 +431,13 @@ function tierTag(cid){
   return '<span class="tag '+cls+'">'+nm+(t.topic?' · '+esc(t.topic):'')+'</span>';
 }
 function subState(cid, s){
-  var r = store.caseRec[cid+'#'+s.no] || {};
+  var key = cid+'#'+s.no;
+  var r = store.caseRec[key] || {};
   if(r.m===2) return 'ok';
   if(r.m===1) return 'mid';
   if(r.m===0) return 'no';
   if((typeof r.draft==='string' && r.draft.trim()!=='') || r.ai) return 'ans';
+  if(store.srs && store.srs[key]) return 'ans';
   return 'none';
 }
 function caseState(cid){
@@ -461,6 +463,12 @@ function caseDots(cid){
     h += '<i class="dot '+st+'" title="问题'+s.no+'：'+NAMES[st]+'"></i>';
   });
   return '<span class="dots">'+h+'</span>';
+}
+function qPreviewText(q, n){
+  n = n || 42;
+  if(q.stem) return q.stem;
+  var g = q.group? DB.groups[q.group] : null;
+  return g? ('[组题] '+g.stem) : '(题干缺失)';
 }
 function openCase(cid){
   var p = DB.papers.find(function(x){ return x.subject===2 && x.cids.indexOf(cid)>=0; });
@@ -1682,7 +1690,7 @@ function vAM(arg){
   if(!wl.length) h+='<p class="muted">暂无错题</p>';
   wl.forEach(function(q){
     var item = DB.questions[q];
-    h+='<div class="wrongs-item"><span>'+item.year+halfName(item.half)+' · 第'+item.num+'题 · '+esc((item.stem||'(组题)').slice(0,42))+'…</span><button class="btn sm" onclick="redoOne(\''+q+'\')">重做</button></div>';
+    h+='<div class="wrongs-item"><span>'+item.year+halfName(item.half)+' · 第'+item.num+'题 · '+esc(qPreviewText(item,42).slice(0,42))+'…</span><button class="btn sm" onclick="redoOne(\''+q+'\')">重做</button></div>';
   });
   h += '</div>';
   view.innerHTML = h;
@@ -1818,8 +1826,10 @@ function subHeader(cid, s, opts){
   opts = opts||{};
   var key = cid+'#'+s.no;
   var r = store.caseRec[key]||{};
+  var c = opts.caseTag? DB.cases[cid] : null;
   return '<div class="subq" id="sq_'+key.replace('#','_')+'">'
-    +'<div class="hd">【问题'+s.no+'】'+(s.score?'（'+s.score+'分）':'')
+    +'<div class="hd">'+(c? '<span class="tag s2">'+c.year+halfName(c.half)+'案例'+c.cn+'</span> ':'')
+    +'【问题'+s.no+'】'+(s.score?'（'+s.score+'分）':'')
     +(s.reconstructed?' <span class="tag warn">逆推题干</span>':'')
     +(s.answer?'':' <span class="tag warn">答案缺失</span>')
     +(opts.noRel? '' : ' <button class="btn sm" onclick="openCaseUnit(\''+cid+'\','+s.no+')">关联知识点</button>')
@@ -2232,8 +2242,9 @@ function unitQInner(qid, mode){
   if(!q) return '';
   var ep = CARDS.meta.qpoint[qid];
   var r = store.rec[qid]||{};
+  var stemHTML = q.stem? esc(q.stem) : (q.group? '<span class="muted">（组题：请阅读上方共用材料后作答）</span>' : '<span class="muted">(题干缺失)</span>');
   var head = '<div class="hd">'+q.year+halfName(q.half)+' 第'+q.num+'题'+(ep?' · <span class="muted">考点: '+esc(ep)+'</span>':'')+'</div>'
-    + '<div class="qtext">'+esc(q.stem||(q.group?'(组题)':''))+'</div>';
+    + '<div class="qtext">'+stemHTML+'</div>';
   var opts = q.options||[];
   if(mode==='read' || r.a!==undefined){
     var html = opts.map(function(o){
@@ -2281,20 +2292,39 @@ function unitQuizHTML(uid){
     + '<span class="muted" id="uqProg">'+unitQProgText(uid)+'</span>'
     + '</div></div>';
   if(!qs.length && !cs.length) return h + '<p class="muted" style="margin-top:8px">暂无直接关联真题（可用范围抽卡练习本章节）</p>';
-  qs.slice(0,20).forEach(function(qid){
-    h += '<div class="subq" id="uq_'+qid+'">'+unitQInner(qid, mode)+'</div>';
-  });
+  var lastGroup = null;
+  function qBlock(qid){
+    var q = DB.questions[qid]; if(!q) return '';
+    var pre = '';
+    if(q.group){
+      if(q.group !== lastGroup){
+        var g = DB.groups[q.group];
+        if(g) pre += '<div class="ana" style="margin-top:10px"><b>📖 组题材料（共用）</b><pre>'+esc(g.stem)+'</pre>'
+          +(g.translation? '<details><summary class="muted">参考译文</summary><pre>'+esc(g.translation)+'</pre></details>':'')+'</div>';
+      }
+      lastGroup = q.group;
+    } else lastGroup = null;
+    return pre + '<div class="subq" id="uq_'+qid+'">'+unitQInner(qid, mode)+'</div>';
+  }
+  qs.slice(0,20).forEach(function(qid){ h += qBlock(qid); });
   if(qs.length>20){
     h += '<details style="margin-top:8px"><summary>显示其余 '+(qs.length-20)+' 道选择题</summary>';
-    qs.slice(20).forEach(function(qid){ h += '<div class="subq" id="uq_'+qid+'">'+unitQInner(qid, mode)+'</div>'; });
+    qs.slice(20).forEach(function(qid){ h += qBlock(qid); });
     h += '</details>';
   }
+  cs = cs.slice().sort(function(a,b){
+    var ca = DB.cases[a.split('#')[0]], cb = DB.cases[b.split('#')[0]];
+    if(!ca) return 1; if(!cb) return -1;
+    var ka = [ca.year, ca.half, ca.cn, +a.split('#')[1]], kb = [cb.year, cb.half, cb.cn, +b.split('#')[1]];
+    for(var i=0;i<4;i++){ if(ka[i]!==kb[i]) return ka[i]-kb[i]; }
+    return 0;
+  });
   function caseQHTML(k){
     var p = k.split('#'), c = DB.cases[p[0]];
     if(!c) return '';
     var sub = c.qs.find(function(x){ return x.no==p[1]; });
     if(!sub) return '';
-    if(mode==='quiz') return subHeader(p[0], sub, {noRel:true}) + caseCtxHTML(p[0], sub) + subBody(p[0], sub) + '</div>';
+    if(mode==='quiz') return subHeader(p[0], sub, {noRel:true, caseTag:true}) + caseCtxHTML(p[0], sub) + subBody(p[0], sub) + '</div>';
     return '<div class="subq"><div class="hd"><span class="tag s2">'+c.year+halfName(c.half)+'案例'+c.cn+'</span> 问题'+p[1]+'</div>'
       + '<div class="qtext">'+sanitize(sub.text||'')+'</div>'
       + caseCtxHTML(p[0], sub)
@@ -2302,10 +2332,20 @@ function unitQuizHTML(uid){
       + (sub.analysis? '<div class="reveal ana2" style="margin-top:6px">'+sanitize(sub.analysis)+'</div>':'')
       + '</div>';
   }
-  cs.slice(0,8).forEach(function(k){ h += caseQHTML(k); });
+  var lastCase = null;
+  function caseBlock(k){
+    var cid = k.split('#')[0], c = DB.cases[cid];
+    var pre = '';
+    if(c && cid !== lastCase){
+      pre = '<div class="muted" style="margin-top:14px;font-weight:700">📄 '+c.year+halfName(c.half)+' 案例'+c.cn+(c.title?' · '+esc(c.title):'')+'</div>';
+      lastCase = cid;
+    }
+    return pre + caseQHTML(k);
+  }
+  cs.slice(0,8).forEach(function(k){ h += caseBlock(k); });
   if(cs.length>8){
     h += '<details style="margin-top:8px"><summary>显示其余 '+(cs.length-8)+' 道案例小题</summary>';
-    cs.slice(8).forEach(function(k){ h += caseQHTML(k); });
+    cs.slice(8).forEach(function(k){ h += caseBlock(k); });
     h += '</details>';
   }
   return h;
@@ -2630,6 +2670,13 @@ function renderFlipCard(id, info){
 function gradeCard(id, g){
   bumpDaily(ksession.isNewMap[id]?'n':'r');
   srsGrade(id, g);
+  if(id.indexOf('#')>0 && DB.cases[id.split('#')[0]]){
+    var r = store.caseRec[id] || {};
+    r.m = (g>=2? 2 : (g===1? 1 : 0));
+    r.ts = Date.now();
+    store.caseRec[id] = r; save();
+    toast(r.m===2? '已标记掌握' : (r.m===1? '已标记模糊（进错题本）':'已加入错题本'));
+  }
   knowNext();
 }
 function knowNext(){ ksession.i++; ksession.flipped=false; ksession.answered=false; ksession.picked=null; renderKCard(); }
@@ -2696,7 +2743,7 @@ function vWrong(){
     if(DB.questions[q]){
       var item = DB.questions[q], r = store.rec[q];
       var st = (r && r.streak)||0;
-      h += '<div class="wrongs-item"><span><span class="tag s1">'+item.year+halfName(item.half)+'</span>第'+item.num+'题 '+esc((item.stem||'(组题)').slice(0,48))+'…<br><span class="muted">你的:'+(r.a||'-')+' 正确:'+(item.answer||'?')+' · 做错过 · 连对 '+st+'/'+wrongMasterN()+'</span></span>'
+      h += '<div class="wrongs-item"><span><span class="tag s1">'+item.year+halfName(item.half)+'</span>第'+item.num+'题 '+esc(qPreviewText(item,48).slice(0,48))+'…<br><span class="muted">你的:'+(r.a||'-')+' 正确:'+(item.answer||'?')+' · 做错过 · 连对 '+st+'/'+wrongMasterN()+'</span></span>'
         +'<span><button class="btn sm" onclick="redoOne(\''+q+'\')">重做</button> <button class="btn sm" onclick="resolveOne(\''+q+'\')">已掌握</button></span></div>';
     } else if(store.caseRec[q] && store.caseRec[q].m!==undefined){
       var pp = q.split('#'), c = DB.cases[pp[0]];
