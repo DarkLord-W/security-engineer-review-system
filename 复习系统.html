@@ -121,10 +121,22 @@ details summary{cursor:pointer;color:var(--pri);font-size:13.5px;margin:6px 0}
 .pday.today{background:var(--pri2);border-radius:8px}
 .pday.today .dt{color:var(--pri);font-weight:700}
 .pday.overdue .dt{color:var(--ng);font-weight:600}
+.pday.overdue-todo .dt{color:var(--warn);font-weight:600}
 .pbadge{display:inline-block;font-size:12px;padding:1px 7px;border-radius:6px;margin-left:4px}
 .pbadge.done{background:var(--okbg);color:var(--ok)}
 .pbadge.part{background:var(--warnbg);color:var(--warn)}
+.pbadge.todo{background:var(--pri2);color:var(--pri)}
 .pbadge.none{background:#eef1f6;color:var(--tx2)}
+.dots{display:inline-flex;gap:3px;margin-left:4px;vertical-align:middle}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;background:#dfe5f0}
+.dot.ok{background:var(--ok)}
+.dot.mid{background:var(--warn)}
+.dot.no{background:var(--ng)}
+.dot.ans{background:var(--pri)}
+.pdayprog{font-size:11px;color:var(--tx2)}
+.pdayprog.full{color:var(--ok);font-weight:700}
+.planlegend{font-size:12px;color:var(--tx2);margin-top:6px}
+.planlegend .dot{margin:0 2px}
 .pcase{cursor:pointer;margin-right:10px;white-space:nowrap}
 .pcase:hover{color:var(--pri);text-decoration:underline}
 .phase-hd{margin:14px 0 4px;font-weight:700;font-size:14.5px}
@@ -418,12 +430,37 @@ function tierTag(cid){
   var nm = t.tier===0?'T0必背':(t.tier===1?'T1预测':'T2');
   return '<span class="tag '+cls+'">'+nm+(t.topic?' · '+esc(t.topic):'')+'</span>';
 }
+function subState(cid, s){
+  var r = store.caseRec[cid+'#'+s.no] || {};
+  if(r.m===2) return 'ok';
+  if(r.m===1) return 'mid';
+  if(r.m===0) return 'no';
+  if((typeof r.draft==='string' && r.draft.trim()!=='') || r.ai) return 'ans';
+  return 'none';
+}
 function caseState(cid){
   var c = DB.cases[cid];
-  if(!c) return {state:'none', done:0, total:0};
-  var done = 0;
-  c.qs.forEach(function(s){ var r = store.caseRec[cid+'#'+s.no]; if(r && r.m!==undefined) done++; });
-  return {state: done===0?'none':(done<c.qs.length?'part':'done'), done:done, total:c.qs.length};
+  if(!c) return {state:'none', total:0, answered:0, marked:0, mastered:0, wrong:0, done:0};
+  var answered=0, marked=0, mastered=0, wrong=0;
+  c.qs.forEach(function(s){
+    var st = subState(cid, s);
+    if(st==='ans'){ answered++; return; }
+    if(st==='none') return;
+    answered++; marked++;
+    if(st==='ok') mastered++; else wrong++;
+  });
+  var state = marked===0? (answered? 'todo':'none') : (marked<c.qs.length? 'part':'done');
+  return {state:state, total:c.qs.length, answered:answered, marked:marked, mastered:mastered, wrong:wrong, done:marked};
+}
+function caseDots(cid){
+  var c = DB.cases[cid]; if(!c) return '';
+  var NAMES = {ok:'会', mid:'模糊', no:'不会', ans:'已答待自评', none:'未做'};
+  var h = '';
+  c.qs.forEach(function(s){
+    var st = subState(cid, s);
+    h += '<i class="dot '+st+'" title="问题'+s.no+'：'+NAMES[st]+'"></i>';
+  });
+  return '<span class="dots">'+h+'</span>';
 }
 function openCase(cid){
   var p = DB.papers.find(function(x){ return x.subject===2 && x.cids.indexOf(cid)>=0; });
@@ -474,8 +511,12 @@ function casesByTier(t){
 }
 function planCaseStateHTML(cid){
   var st = caseState(cid);
-  if(st.state==='done') return '<span class="pbadge done">已完成</span>';
-  if(st.state==='part') return '<span class="pbadge part">部分 '+st.done+'/'+st.total+'</span>';
+  if(st.state==='done'){
+    if(st.wrong===0) return '<span class="pbadge done">✅ 已掌握</span>';
+    return '<span class="pbadge done">已完成 '+st.marked+'/'+st.total+'</span>';
+  }
+  if(st.state==='part') return '<span class="pbadge part">已自评 '+st.marked+'/'+st.total+' · 已答 '+st.answered+'/'+st.total+'</span>';
+  if(st.state==='todo') return '<span class="pbadge todo">待自评 '+st.answered+'/'+st.total+'</span>';
   return '<span class="pbadge none">未做</span>';
 }
 
@@ -1081,7 +1122,7 @@ function planHomeCard(){
       h += '<div class="row" style="margin-top:8px">';
       day.cases.forEach(function(cid){
         var c = DB.cases[cid]; if(!c) return;
-        h += '<span style="margin-right:12px"><span class="pcase" onclick="openCase(\''+cid+'\')"><span class="tag s2">'+c.year+halfName(c.half)+'</span>试题'+c.cn+(c.title?' '+esc(c.title):'')+'</span>'+planCaseStateHTML(cid)+'</span>';
+        h += '<span style="margin-right:12px"><span class="pcase" onclick="openCase(\''+cid+'\')"><span class="tag s2">'+c.year+halfName(c.half)+'</span>试题'+c.cn+(c.title?' '+esc(c.title):'')+'</span>'+planCaseStateHTML(cid)+caseDots(cid)+'</span>';
       });
       h += '</div>';
       h += '<p class="muted" style="margin-top:6px">'+esc(day.task||'')+(day.focus?' · 🎯 '+esc(day.focus):'')+'</p>';
@@ -1096,18 +1137,36 @@ function planHomeCard(){
   } else {
     h += '<p class="muted" style="margin-top:6px">今天不在37天计划内（10/24-10/27为考试日）。自由复习：优先错题本与默写清单。</p>';
   }
-  var pending = [];
+  var pendingNone = [], pendingTodo = [];
   PLAN.schedule.forEach(function(d){
     if(!isBeforeToday(d.date) || !d.cases) return;
-    d.cases.forEach(function(cid){ if(caseState(cid).state!=='done') pending.push(cid); });
+    d.cases.forEach(function(cid){
+      var st = caseState(cid);
+      if(st.state==='done') return;
+      if(st.state==='none') pendingNone.push(cid); else pendingTodo.push(cid);
+    });
   });
-  if(pending.length){
-    h += '<p style="margin-top:8px;color:var(--ng)">⚠ 有 '+pending.length+' 道题逾期未完成：';
-    h += pending.slice(0,6).map(function(cid){ var c=DB.cases[cid]; return '<span class="pcase" onclick="openCase(\''+cid+'\')">'+(c? (c.year+halfName(c.half)+'试题'+c.cn):cid)+'</span>'; }).join('、');
-    h += (pending.length>6?' 等':'')+'</p>';
+  function pendLine(arr, label, color){
+    if(!arr.length) return '';
+    var s = '<p style="margin-top:8px;color:'+color+'">⚠ 有 '+arr.length+' 道题'+label+'：';
+    s += arr.slice(0,6).map(function(cid){ var c=DB.cases[cid]; return '<span class="pcase" onclick="openCase(\''+cid+'\')">'+(c? (c.year+halfName(c.half)+'试题'+c.cn):cid)+'</span>'; }).join('、');
+    s += (arr.length>6?' 等':'')+'</p>';
+    return s;
   }
+  h += pendLine(pendingNone, '逾期未做', 'var(--ng)');
+  h += pendLine(pendingTodo, '逾期待自评', 'var(--warn)');
   h += '</div>';
   return h;
+}
+function dayStats(d){
+  var tot=0, done=0, ans=0;
+  (d.cases||[]).forEach(function(cid){
+    var st = caseState(cid);
+    tot++;
+    if(st.state==='done') done++;
+    if(st.state!=='none') ans++;
+  });
+  return {tot:tot, done:done, ans:ans};
 }
 function vPlan(){
   var phases = {
@@ -1117,23 +1176,31 @@ function vPlan(){
     4:'④ 二轮错题 + 模考（10/10-10/18）',
     5:'⑤ 考前冲刺（10/19-10/23）'
   };
-  var totalCases = 0, doneCases = 0;
-  PLAN.schedule.forEach(function(d){ (d.cases||[]).forEach(function(cid){ totalCases++; if(caseState(cid).state==='done') doneCases++; }); });
+  var totalCases = 0, doneCases = 0, ansCases = 0;
+  PLAN.schedule.forEach(function(d){ (d.cases||[]).forEach(function(cid){ totalCases++; var st=caseState(cid); if(st.state==='done') doneCases++; if(st.state!=='none') ansCases++; }); });
+  var pctDone = totalCases? Math.round(doneCases/totalCases*100) : 0;
   var h = '<div class="card"><h2>📅 37天案例冲刺计划</h2>'
     +'<div class="row"><div class="stat"><b>'+daysToExam()+'</b><span>距考试天数</span></div>'
-    +'<div class="stat g"><b>'+doneCases+'/'+totalCases+'</b><span>排期题目完成(含二刷)</span></div>'
+    +'<div class="stat g"><b>'+doneCases+'/'+totalCases+'</b><span>完成（自评口径·含二刷）</span></div>'
+    +'<div class="stat"><b>'+ansCases+'/'+totalCases+'</b><span>已答（含二刷）</span></div>'
     +'<div class="stat o"><b>'+wrongList().filter(function(k){ return k.indexOf('#')>0; }).length+'</b><span>案例错题待清</span></div></div>'
-    +'<p class="muted" style="margin-top:8px">每天：默写→对答案→自评「会/模糊/不会」；错题进错题本，二轮只刷错题。考试日 10/24-10/27。 · <span class="pcase" onclick="go(\'sprint\')">📐 打开冲刺手册</span></p></div>';
+    +'<div class="bar" style="margin-top:8px"><i style="width:'+pctDone+'%"></i></div>'
+    +'<p class="muted" style="margin-top:8px">每天：默写→对答案→自评「会/模糊/不会」；<b>每小问自评后计为完成</b>，错题进错题本，二轮只刷错题。考试日 10/24-10/27。 · <span class="pcase" onclick="go(\'sprint\')">📐 打开冲刺手册</span></p>'
+    +'<p class="planlegend">图例：<i class="dot none"></i>未做 <i class="dot ans"></i>已答待自评 <i class="dot ok"></i>会 <i class="dot mid"></i>模糊 <i class="dot no"></i>不会</p></div>';
   h += '<div class="card">';
   var curPhase = 0;
   PLAN.schedule.forEach(function(d){
     if(d.phase!==curPhase){ curPhase = d.phase; h += '<div class="phase-hd">'+phases[d.phase]+'</div>'; }
-    var cls = 'pday' + (d.date===today()?' today':'') + (isBeforeToday(d.date) && !dayComplete(d)? ' overdue':'');
-    h += '<div class="'+cls+'"><div class="dt">'+d.date.replace('2026-','')+'<br>'+esc(d.task||'')+'</div><div style="flex:1">';
+    var ds = dayStats(d);
+    var overCls = '';
+    if(isBeforeToday(d.date) && !dayComplete(d)) overCls = ds.ans===ds.tot? ' overdue-todo' : ' overdue';
+    var cls = 'pday' + (d.date===today()?' today':'') + overCls;
+    var dayProg = ds.tot? '<br><span class="pdayprog'+(ds.done===ds.tot?' full':'')+'">'+ds.done+'/'+ds.tot+' 完成</span>' : '';
+    h += '<div class="'+cls+'"><div class="dt">'+d.date.replace('2026-','')+'<br>'+esc(d.task||'')+dayProg+'</div><div style="flex:1">';
     if(d.cases && d.cases.length){
       d.cases.forEach(function(cid){
         var c = DB.cases[cid]; if(!c) return;
-        h += '<span style="margin-right:12px"><span class="pcase" onclick="openCase(\''+cid+'\')"><span class="tag s2">'+c.year+halfName(c.half)+'</span>试题'+c.cn+(c.title?' '+esc(c.title):'')+'</span>'+planCaseStateHTML(cid)+'</span>';
+        h += '<span style="margin-right:12px"><span class="pcase" onclick="openCase(\''+cid+'\')"><span class="tag s2">'+c.year+halfName(c.half)+'</span>试题'+c.cn+(c.title?' '+esc(c.title):'')+'</span>'+planCaseStateHTML(cid)+caseDots(cid)+'</span>';
       });
     } else {
       h += '<span>'+esc(d.task||'')+'</span>'+(d.exam? ' <button class="btn sm" onclick="startExam(\''+d.exam+'\')">开始模考</button>':'');
@@ -1547,7 +1614,7 @@ function vPM(){
     var pp = DB.papers.find(function(x){ return x.id===PLAN.predictPool.id; });
     var ps = pp? paperStat(pp) : {done:0,total:0,pct:0};
     h += '<div class="card" style="border:2px solid var(--pri)"><div class="row" style="justify-content:space-between">'
-      +'<b>🎯 '+esc(PLAN.predictPool.title)+'</b><span class="muted">10道高概率复刻题 · '+ps.done+'/'+ps.total+'问</span></div>'
+      +'<b>🎯 '+esc(PLAN.predictPool.title)+'</b><span class="muted">10道高概率复刻题 · 已自评 '+ps.done+'/'+ps.total+' 问</span></div>'
       +'<div class="bar" style="margin:8px 0"><i style="width:'+ps.pct+'%"></i></div>'
       +'<button class="btn pri" onclick="openPaper(\''+PLAN.predictPool.id+'\')">进入预测卷</button></div>';
   }
@@ -1559,10 +1626,10 @@ function vPM(){
   if(pmFilter!=='all'){
     var ids = casesByTier(+pmFilter);
     var doneN = 0; ids.forEach(function(cid){ if(caseState(cid).state==='done') doneN++; });
-    h += '<p class="muted" style="margin-top:8px">共 '+ids.length+' 题，已完成 '+doneN+' 题。点击题名直接进入该卷作答。</p></div><div class="card">';
+    h += '<p class="muted" style="margin-top:8px">共 '+ids.length+' 题，已自评完成 '+doneN+' 题（每小问自评后计为完成）。点击题名直接进入该卷作答。</p></div><div class="card">';
     ids.forEach(function(cid){
       var c = DB.cases[cid]; if(!c) return;
-      h += '<div class="wrongs-item"><span><span class="pcase" onclick="openCase(\''+cid+'\')"><span class="tag s2">'+c.year+halfName(c.half)+'</span>试题'+c.cn+(c.title?' '+esc(c.title):'')+'</span> '+tierTag(cid)+'</span><span>'+planCaseStateHTML(cid)+'</span></div>';
+      h += '<div class="wrongs-item"><span><span class="pcase" onclick="openCase(\''+cid+'\')"><span class="tag s2">'+c.year+halfName(c.half)+'</span>试题'+c.cn+(c.title?' '+esc(c.title):'')+'</span> '+tierTag(cid)+'</span><span>'+planCaseStateHTML(cid)+caseDots(cid)+'</span></div>';
     });
     h += '</div>';
   } else {
@@ -1571,7 +1638,7 @@ function vPM(){
     DB.papers.filter(function(p){ return p.subject===2 && !p.virtual; }).forEach(function(p){
       var s = paperStat(p);
       h += '<div class="card pcard" style="margin:0" onclick="openPaper(\''+p.id+'\')"><b>'+p.title+'</b><br>'
-        +'<span class="tag s2">下午·案例</span><span class="muted">'+p.cids.length+'道大题 · '+s.done+'/'+s.total+'问</span>'
+        +'<span class="tag s2">下午·案例</span><span class="muted">'+p.cids.length+'道大题 · 已自评 '+s.done+'/'+s.total+' 问</span>'
         +'<div class="bar" style="margin-top:8px"><i style="width:'+s.pct+'%"></i></div></div>';
     });
     h += '</div>';
@@ -1632,11 +1699,11 @@ function vCasePaper(p){
     +'<button class="btn sm" onclick="openCheatModal()">🧭 速查</button>'
     +'<button class="btn sm" onclick="openSprint(\'script\')">💬 话术</button>'
     +'<button class="btn sm" onclick="go(\'pm\')">返回</button></div></div>'
-    +'<p class="muted">先自己作答再对照答案。自评「会」后移出错题本。</p></div>';
+    +'<p class="muted">先自己作答再对照答案。每小问自评（会/模糊/不会）后计入进度；自评「会」后移出错题本。</p></div>';
   p.cids.forEach(function(cid){
     var c = DB.cases[cid];
     h += '<div class="card"><b style="font-size:16px">试题'+c.cn+'</b>'+(c.score?'（共'+c.score+'分）':'')
-      +(c.title?' · '+esc(c.title):'')+' '+caseBadge(c)+' '+tierTag(cid)
+      +(c.title?' · '+esc(c.title):'')+' '+caseBadge(c)+' '+tierTag(cid)+' '+planCaseStateHTML(cid)+caseDots(cid)
       +(c.md_overview? '<details><summary>📘 官方解析书·本题总述</summary><div class="ana"><pre>'+esc(c.md_overview)+'</pre></div></details>':'')
       +'<div class="case qtext">'+sanitize(c.scenario||'')+'</div>'
       + explainBoxHTML(cid);
