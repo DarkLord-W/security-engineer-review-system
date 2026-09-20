@@ -229,7 +229,7 @@ details summary{cursor:pointer;color:var(--pri);font-size:13.5px;margin:6px 0}
 <script src="data/explain.js" onerror="this.remove()"></script>
 <script>
 'use strict';
-var APP_VER = 'v1.4';
+var APP_VER = 'v1.5';
 console.log('信息安全工程师复习系统 ' + APP_VER);
 window.onerror = function(m, s, l){ var e=document.getElementById('errbox'); e.style.display='block'; e.textContent += m+' @'+l+'\n'; };
 
@@ -1307,7 +1307,8 @@ function vPlan(){
     +'<div class="stat"><b>'+ansCases+'/'+totalCases+'</b><span>已答（含二刷）</span></div>'
     +'<div class="stat o"><b>'+wrongList().filter(function(k){ return k.indexOf('#')>0; }).length+'</b><span>案例错题待清</span></div></div>'
     +'<div class="bar" style="margin-top:8px"><i style="width:'+pctDone+'%"></i></div>'
-    +'<p class="planlegend">图例：<i class="dot none"></i>未做 <i class="dot ans"></i>已答待自评 <i class="dot ok"></i>会 <i class="dot mid"></i>模糊 <i class="dot no"></i>不会</p></div>';
+    +'<p class="planlegend" style="margin-bottom:0">进度：<i class="dot none"></i>未做 &nbsp; <i class="dot ans"></i>已答待自评</p>'
+    +'<p class="planlegend">自评：<i class="dot ok"></i>会 &nbsp; <i class="dot mid"></i>模糊 &nbsp; <i class="dot no"></i>不会</p></div>';
   if(auto){
     var dp = dynPlan();
     if(dp.ended){
@@ -1842,6 +1843,7 @@ function subBody(cid, s){
   var key = cid+'#'+s.no, r = store.caseRec[key]||{};
   var kk = key.replace('#','_');
   var h = '<textarea id="ta_'+kk+'" placeholder="在此输入你的作答（用于AI评分）…" oninput="saveDraft(\''+key+'\', this.value)">'+esc(r.draft||'')+'</textarea>'
+    +'<div class="muted" id="st_'+kk+'" style="font-size:12px;margin-top:2px">'+subStatusText(key)+'</div>'
     +'<div class="row" style="margin-top:8px">'
     +'<button class="btn sm pri" onclick="aiGrade(\''+key+'\')">🤖 AI评分</button>'
     +'<button class="btn sm" onclick="toggleReveal(\''+key+'\',\'a\')">显示参考答案</button>'
@@ -1894,10 +1896,34 @@ function toggleReveal(key, which){
   var el = document.getElementById((which==='a'?'ra_':'ran_')+key.replace('#','_'));
   if(el) el.style.display = el.style.display==='none'? 'block':'none';
 }
+function fmtClock(ts){ var d=new Date(ts); return ('0'+d.getHours()).slice(-2)+':'+('0'+d.getMinutes()).slice(-2); }
+function subStatusText(key){
+  var r = store.caseRec[key]||{};
+  var parts = [];
+  if(r.m!==undefined) parts.push('已自评：'+(r.m===2?'会':(r.m===1?'模糊':'不会')));
+  if(r.ai) parts.push('AI已评 '+((r.ai.score!==undefined)? (r.ai.score+'/'+(r.ai.max||'?')) : ''));
+  if(typeof r.draft==='string' && r.draft.trim()!=='') parts.push('已保存草稿'+(r.ts? ' '+fmtClock(r.ts):''));
+  return parts.length? '✓ '+parts.join(' · ') : '未作答（输入/AI评分/自评后自动保存）';
+}
+function updateSubStatus(key){
+  var el = document.getElementById('st_'+key.replace('#','_'));
+  if(el) el.textContent = subStatusText(key);
+}
 function saveDraft(key, txt){
   var r = store.caseRec[key] || {};
-  r.draft = txt; store.caseRec[key] = r;
-  clearTimeout(saveDraft._t); saveDraft._t = setTimeout(save, 600);
+  r.draft = txt; r.ts = Date.now(); store.caseRec[key] = r;
+  var el = document.getElementById('st_'+key.replace('#','_'));
+  if(el) el.textContent = '输入中…';
+  saveDraft._keys = saveDraft._keys||{}; saveDraft._keys[key]=1;
+  clearTimeout(saveDraft._t);
+  saveDraft._t = setTimeout(function(){
+    var ok = save();
+    var ks = saveDraft._keys||{}; saveDraft._keys = {};
+    Object.keys(ks).forEach(function(k){
+      var e2 = document.getElementById('st_'+k.replace('#','_'));
+      if(e2) e2.textContent = ok? subStatusText(k) : '⚠ 保存失败，请检查浏览器存储';
+    });
+  }, 600);
 }
 function markCase(key, m){
   var r = store.caseRec[key] || {};
@@ -1908,6 +1934,7 @@ function markCase(key, m){
     var b = document.getElementById('mk'+x+'_'+kk);
     if(b) b.classList.toggle('on', x===m);
   });
+  updateSubStatus(key);
   if(exam) return;
   if(currentView==='know'){ if(typeof updateUnitQProg==='function') updateUnitQProg(); return; }
   if(currentView==='wrong'){ vWrong(); return; }
@@ -1955,6 +1982,7 @@ function aiGrade(key){
       if(out) out.innerHTML = renderAI(res.result);
       var st2 = document.getElementById('ai_'+kk);
       if(st2) st2.innerHTML = res.cached? '<span class="tag gray">缓存结果</span>':'<span class="tag ok">评分完成</span>';
+      updateSubStatus(key);
     })
     .catch(function(e){
       var st2 = document.getElementById('ai_'+kk);
