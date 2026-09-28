@@ -229,7 +229,7 @@ details summary{cursor:pointer;color:var(--pri);font-size:13.5px;margin:6px 0}
 <script src="data/explain.js" onerror="this.remove()"></script>
 <script>
 'use strict';
-var APP_VER = 'v1.5';
+var APP_VER = 'v1.6';
 console.log('信息安全工程师复习系统 ' + APP_VER);
 window.onerror = function(m, s, l){ var e=document.getElementById('errbox'); e.style.display='block'; e.textContent += m+' @'+l+'\n'; };
 
@@ -710,6 +710,27 @@ function caseCtxHTML(cid, s){
   var h = '<details class="casebg"'+(hasRef? ' open':'')+'><summary>📖 案例背景</summary><div class="case qtext">'+sanitize(c.scenario||'')+'</div></details>';
   if(!/<img|<table/.test(txt)) h += caseFigureHTML(cid, txt);
   return h;
+}
+/* 案例题干排版：把连成一段的小问 (1)(2)… 与选项 A./B./C./D. 自动换行、缩进。
+   只对"多小问/多选项"的文本启用；<pre>代码块、<table>表格、图片等原样保留。 */
+function caseFmt(raw){
+  var s = String(raw==null? '': raw);
+  if(!s) return s;
+  var parts = s.split(/(<pre[\s\S]*?<\/pre>|<table[\s\S]*?<\/table>|<img[^>]*>|<details[\s\S]*?<\/details>)/i);
+  for(var i=0;i<parts.length;i++){
+    if(i % 2 === 1) continue; // 保护块
+    var t = parts[i];
+    if(!t) continue;
+    var subN = (t.match(/[（(]\s*\d{1,2}\s*[）)]/g)||[]).length;
+    var optN = (t.match(/[\s\u3000][A-D]\s*[.、．]\s*\S/g)||[]).length;
+    if(subN >= 3 || optN >= 2){
+      t = t.replace(/\s*([（(]\s*\d{1,2}\s*[）)])/g, '\n$1');
+      t = t.replace(/[\s\u3000]+([A-D])\s*[.、．]\s*/g, '\n　　$1. ');
+      t = t.replace(/\n{3,}/g, '\n\n').replace(/^\n+/, '');
+    }
+    parts[i] = t;
+  }
+  return parts.join('');
 }
 
 function halfName(h){ return h===1?'上半年':'下半年'; }
@@ -1837,7 +1858,7 @@ function subHeader(cid, s, opts){
     +(s.answer?'':' <span class="tag warn">答案缺失</span>')
     +(opts.noRel? '' : ' <button class="btn sm" onclick="openCaseUnit(\''+cid+'\','+s.no+')">关联知识点</button>')
     +'</div>'
-    +'<div class="qtext">'+sanitize(s.text||'<i class="muted">题干缺失</i>')+'</div>';
+    +'<div class="qtext">'+sanitize(caseFmt(s.text)||'<i class="muted">题干缺失</i>')+'</div>';
 }
 function subBody(cid, s){
   var key = cid+'#'+s.no, r = store.caseRec[key]||{};
@@ -2025,7 +2046,7 @@ function renderExam(){
   c.qs.forEach(function(s){
     var key = cid+'#'+s.no, r = store.caseRec[key]||{};
     h += '<div class="subq"><div class="hd">【问题'+s.no+'】'+(s.score?'（'+s.score+'分）':'')+'</div>'
-      +'<div class="qtext">'+sanitize(s.text||'')+'</div>'
+      +'<div class="qtext">'+sanitize(caseFmt(s.text))+'</div>'
       +'<textarea id="ta_'+key.replace('#','_')+'" oninput="saveDraft(\''+key+'\', this.value)">'+esc(r.draft||'')+'</textarea></div>';
   });
   h += '<div class="nav"><button class="btn" onclick="examNav(-1)" '+(exam.i===0?'disabled':'')+'>上一题</button>'
@@ -2056,7 +2077,7 @@ function submitExam(){
     keys.forEach(function(k){
       var r = store.caseRec[k.key]||{};
       lh += '<div class="subq"><div class="hd">'+k.c.cn+' 【问题'+k.s.no+'】('+(k.s.score||'?')+'分)</div>'
-        +'<div class="qtext">'+sanitize(k.s.text||'')+'</div>'
+        +'<div class="qtext">'+sanitize(caseFmt(k.s.text))+'</div>'
         +'<div class="reveal"><b>你的作答:</b><pre>'+esc(r.draft||'(空白)')+'</pre><b>参考答案:</b>'+(k.s.answer?sanitize(k.s.answer):'(缺失)')+'</div></div>';
     });
     document.getElementById('exList').innerHTML = lh;
@@ -2356,7 +2377,7 @@ function unitQuizHTML(uid){
     if(!sub) return '';
     if(mode==='quiz') return subHeader(p[0], sub, {noRel:true, caseTag:true}) + caseCtxHTML(p[0], sub) + subBody(p[0], sub) + '</div>';
     return '<div class="subq"><div class="hd"><span class="tag s2">'+c.year+halfName(c.half)+'案例'+c.cn+'</span> 问题'+p[1]+'</div>'
-      + '<div class="qtext">'+sanitize(sub.text||'')+'</div>'
+      + '<div class="qtext">'+sanitize(caseFmt(sub.text))+'</div>'
       + caseCtxHTML(p[0], sub)
       + '<div class="reveal ans">'+(sub.answer? sanitize(sub.answer):'(缺失)')+'</div>'
       + (sub.analysis? '<div class="reveal ana2" style="margin-top:6px">'+sanitize(sub.analysis)+'</div>':'')
@@ -2646,7 +2667,7 @@ function renderCaseCard(id, info){
   var r = store.caseRec[id]||{};
   var h = '<span class="tag s2">案例卡 · '+c.year+halfName(c.half)+'试题'+c.cn+' 问题'+s.no+'</span>'
     +'<details open><summary class="muted">📖 案例背景</summary><div class="case qtext">'+sanitize(c.scenario||'')+'</div></details>'
-    +'<div class="qtext"><b>【问题'+s.no+'】</b>'+(s.score?'('+s.score+'分) ':'')+sanitize(s.text||'')+'</div>'
+    +'<div class="qtext"><b>【问题'+s.no+'】</b>'+(s.score?'('+s.score+'分) ':'')+sanitize(caseFmt(s.text))+'</div>'
     + caseFigureHTML(cid, s.text);
   if(!ksession.flipped){
     h += '<div class="row" style="margin-top:10px"><button class="btn sm pri" onclick="aiGrade(\''+id+'\')">🤖 AI评分</button>'
