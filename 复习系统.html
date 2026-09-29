@@ -229,7 +229,7 @@ details summary{cursor:pointer;color:var(--pri);font-size:13.5px;margin:6px 0}
 <script src="data/explain.js" onerror="this.remove()"></script>
 <script>
 'use strict';
-var APP_VER = 'v1.8';
+var APP_VER = 'v1.9';
 console.log('信息安全工程师复习系统 ' + APP_VER);
 window.onerror = function(m, s, l){ var e=document.getElementById('errbox'); e.style.display='block'; e.textContent += m+' @'+l+'\n'; };
 
@@ -1996,23 +1996,38 @@ function subBody(cid, s, opts){
   var kk = key.replace('#','_');
   var fresh = !!opts.fresh;
   if(fresh) freshDrafts[key] = 1; else delete freshDrafts[key];
+  var hasOldDraft = (typeof r.draft==='string' && r.draft.trim()!=='');
+  var hasPrev = (r.m!==undefined) || !!r.ai || hasOldDraft;
   var h = '<textarea id="ta_'+kk+'" placeholder="'+(fresh? '重做模式：输入新的作答（用于AI评分）…' : '在此输入你的作答（用于AI评分）…')+'" oninput="saveDraft(\''+key+'\', this.value)">'+(fresh? '' : esc(r.draft||''))+'</textarea>'
     +'<div class="muted" id="st_'+kk+'" style="font-size:12px;margin-top:2px">'+(fresh? freshStatusText(key) : subStatusText(key))+'</div>'
-    +((fresh && r.draftPrev)? '<div class="muted" id="rb_'+kk+'" style="font-size:12px"><span class="pcase" onclick="restorePrevDraft(\''+key+'\')">↩ 恢复上次作答</span></div>' : '')
+    +((fresh && (r.draftPrev || hasOldDraft))? '<div class="muted" id="rb_'+kk+'" style="font-size:12px"><span class="pcase" onclick="restorePrevDraft(\''+key+'\')">↩ 恢复上次作答</span></div>' : '')
     +'<div class="row" style="margin-top:8px">'
     +'<button class="btn sm pri" onclick="aiGrade(\''+key+'\')">🤖 AI评分</button>'
     +'<button class="btn sm" onclick="toggleReveal(\''+key+'\',\'a\')">显示参考答案</button>'
     +'<button class="btn sm" onclick="toggleReveal(\''+key+'\',\'an\')">显示解析</button>'
     +'<span class="muted" id="ai_'+kk+'"></span></div>'
-    +'<div id="out_'+kk+'">'+(r.ai? renderAI(r.ai):'')+'</div>'
+    +'<div id="out_'+kk+'">'+((!fresh && r.ai)? renderAI(r.ai):'')+'</div>'
     +'<div class="reveal ans" id="ra_'+kk+'" style="display:none">'+(s.answer? sanitize(s.answer):'<span class="muted">源文件缺失，可用AI补全（批次4）</span>')+'</div>'
     +'<div class="reveal ana2" id="ran_'+kk+'" style="display:none">'+(s.analysis? sanitize(s.analysis):'<span class="muted">无解析</span>')+'</div>'
     +'<div class="markbtns">'
-    +'<button class="btn sm '+(r.m===2?'on':'')+'" id="mk2_'+kk+'" onclick="markCase(\''+key+'\',2)">😀 会</button>'
-    +'<button class="btn sm '+(r.m===1?'on':'')+'" id="mk1_'+kk+'" onclick="markCase(\''+key+'\',1)">😐 模糊</button>'
-    +'<button class="btn sm '+(r.m===0?'on':'')+'" id="mk0_'+kk+'" onclick="markCase(\''+key+'\',0)">😰 不会</button>'
-    +'</div>';
+    +'<button class="btn sm '+((!fresh && r.m===2)?'on':'')+'" id="mk2_'+kk+'" onclick="markCase(\''+key+'\',2)">😀 会</button>'
+    +'<button class="btn sm '+((!fresh && r.m===1)?'on':'')+'" id="mk1_'+kk+'" onclick="markCase(\''+key+'\',1)">😐 模糊</button>'
+    +'<button class="btn sm '+((!fresh && r.m===0)?'on':'')+'" id="mk0_'+kk+'" onclick="markCase(\''+key+'\',0)">😰 不会</button>'
+    +'</div>'
+    +((fresh && hasPrev)? '<details style="margin-top:8px;font-size:13px"><summary class="muted">📄 上次记录（'+esc(prevSummary(r))+'）</summary>'
+        + '<div class="ana" style="margin-top:6px">'
+        + (r.m!==undefined? '<div><b>上次自评：</b>'+(r.m===2?'会':(r.m===1?'模糊':'不会'))+'</div>' : '')
+        + (r.ai? '<div style="margin-top:6px"><b>上次 AI 评分：</b></div>'+renderAI(r.ai) : '')
+        + (hasOldDraft? '<div style="margin-top:6px"><b>上次作答草稿：</b></div><pre>'+esc(r.draft)+'</pre>' : '')
+        + '</div></details>' : '');
   return h;
+}
+function prevSummary(r){
+  var parts = [];
+  if(r.m!==undefined) parts.push('已自评：'+(r.m===2?'会':(r.m===1?'模糊':'不会')));
+  if(r.ai) parts.push('AI已评 '+((r.ai.score!==undefined)? (r.ai.score+'/'+(r.ai.max||'?')) : ''));
+  if(typeof r.draft==='string' && r.draft.trim()!=='') parts.push('旧草稿'+(r.ts? ' '+fmtClock(r.ts):''));
+  return parts.join(' · ');
 }
 function vCasePaper(p){
   currentPaperId = p.id;
@@ -2062,19 +2077,15 @@ function subStatusText(key){
 }
 var freshDrafts = {}; // 重做模式下文本框留空的 key（首次输入时备份旧草稿）
 function freshStatusText(key){
-  var r = store.caseRec[key]||{};
-  var parts = ['🔄 重做模式：文本框已清空'];
-  if(r.m!==undefined) parts.push('已自评：'+(r.m===2?'会':(r.m===1?'模糊':'不会')));
-  if(r.ai) parts.push('AI已评 '+((r.ai.score!==undefined)? (r.ai.score+'/'+(r.ai.max||'?')) : ''));
-  if(typeof r.draft==='string' && r.draft.trim()!=='') parts.push('旧草稿已保存'+(r.ts? ' '+fmtClock(r.ts):''));
-  return parts.join(' · ');
+  return '🔄 重做模式：文本框已清空（输入新作答后更新记录）';
 }
 function restorePrevDraft(key){
   var r = store.caseRec[key]||{};
-  if(!r.draftPrev){ toast('没有可恢复的旧作答'); return; }
+  var prev = r.draftPrev || r.draft;
+  if(!prev || String(prev).trim()===''){ toast('没有可恢复的旧作答'); return; }
   var ta = document.getElementById('ta_'+key.replace('#','_'));
-  if(ta) ta.value = r.draftPrev;
-  saveDraft(key, r.draftPrev);
+  if(ta) ta.value = prev;
+  saveDraft(key, prev);
   toast('已恢复上次作答');
 }
 function updateSubStatus(key){
