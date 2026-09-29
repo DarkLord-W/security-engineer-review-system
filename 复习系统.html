@@ -229,7 +229,7 @@ details summary{cursor:pointer;color:var(--pri);font-size:13.5px;margin:6px 0}
 <script src="data/explain.js" onerror="this.remove()"></script>
 <script>
 'use strict';
-var APP_VER = 'v1.7';
+var APP_VER = 'v1.8';
 console.log('信息安全工程师复习系统 ' + APP_VER);
 window.onerror = function(m, s, l){ var e=document.getElementById('errbox'); e.style.display='block'; e.textContent += m+' @'+l+'\n'; };
 
@@ -512,6 +512,36 @@ function backToCase(){
     var el = document.getElementById('sq_'+rt.key.replace('#','_'));
     if(el) el.scrollIntoView({behavior:'smooth', block:'center'});
   }, 80);
+}
+/* 小题的全部关联知识点单元 */
+function caseUnits(cid, no){
+  var key = cid+'#'+no;
+  var m = CARDS.meta.cunit||{}, mx = CARDS.meta.cunitX||{};
+  var out = [];
+  if(m[key] && unitById(m[key])) out.push(m[key]);
+  (mx[key]||[]).forEach(function(u){ if(unitById(u) && out.indexOf(u)<0) out.push(u); });
+  return out;
+}
+/* 从刷题页跳到知识点后，提供"返回"入口（按会话是否仍存在判断） */
+var studyReturn = null;
+function studyUnit(uid, kind){
+  if(!unitById(uid)){ toast('知识点不存在'); return; }
+  studyReturn = {kind: kind};
+  ksession = null;
+  go('know'); vUnit(uid);
+}
+function studyBack(){
+  var k = studyReturn && studyReturn.kind;
+  studyReturn = null;
+  if(k==='case' && cwSession){ go('wrong'); return; }
+  if(k==='choice' && session){ go('am', {session:1}); return; }
+  go('know');
+}
+function cwStudy(uid){ studyUnit(uid, 'case'); }
+function sessionStudy(qid){
+  var uid = CARDS.meta.qunit[qid] || ((CARDS.meta.qunitX[qid]||[])[0]);
+  if(!uid || !unitById(uid)){ toast('该题暂无关联知识点'); return; }
+  studyUnit(uid, 'choice');
 }
 function planDay(){ var t = today(); return PLAN.schedule.find(function(d){ return d.date===t; }); }
 function casesByTier(t){
@@ -1150,7 +1180,16 @@ function vCaseWrong(){
     + '<button class="btn sm" onclick="cwExit()">退出</button></div>'
     + '<div class="bar" style="margin:8px 0"><i style="width:'+Math.round(i/N*100)+'%"></i></div>'
     + '<p class="muted">答「会」即移出错题本并自动下一题；「模糊/不会」留在错题本。数量与顺序见错题本上方设置。</p></div>';
-  h += '<div class="card">' + subHeader(p[0], sub, {noRel:true, caseTag:true}) + caseCtxHTML(p[0], sub) + subBody(p[0], sub) + '</div>';
+  var uids = caseUnits(p[0], sub.no);
+  h += '<div class="card">';
+  if(uids.length){
+    h += '<div class="row" style="margin-bottom:6px;flex-wrap:wrap"><span class="muted">📚 本题知识点：</span>'
+      + uids.map(function(uid){ var x = unitById(uid); return '<button class="btn sm" style="margin:2px 6px 2px 0" onclick="cwStudy(\''+uid+'\')">'+esc(x? (x.no+' '+x.title) : uid)+'</button>'; }).join('')
+      + '</div>';
+  } else {
+    h += '<p class="muted" style="margin-bottom:6px">本题暂无直接关联知识点</p>';
+  }
+  h += subHeader(p[0], sub, {caseTag:true}) + caseCtxHTML(p[0], sub) + subBody(p[0], sub, {fresh:true}) + '</div>';
   h += '<div class="card"><div class="nav"><button class="btn" onclick="cwExit()">退出</button>'
     + '<span><button class="btn" onclick="cwGo(-1)" '+(i===0?'disabled':'')+'>上一题</button> '
     + '<button class="btn" onclick="cwGo(1)">跳过 / 下一题</button></span></div></div>';
@@ -1852,6 +1891,11 @@ function renderSession(){
     h += '<div class="ana"><b>'+(session.correct?'✅ 答对':'❌ 答错')+'</b>'+(q.answer?'　正确答案: <b>'+q.answer+'</b>':'　<span class="tag warn">源文件缺失答案(可在设置配置AI后于知识点模块补全)</span>')
       +(session.wrongDrill? '<div class="muted" style="margin-top:4px">本题连对：'+(rNow.streak||0)+'/'+need+((rNow.streak||0)>=need?' ✅ 已掌握（移出错题本）':'')+'</div>':'')
       +(q.analysis? '<pre>'+esc(q.analysis)+'</pre>':'')+'</div>';
+    var kn = CARDS.meta.qunit[q.id] || ((CARDS.meta.qunitX[q.id]||[])[0]);
+    if(kn && unitById(kn)){
+      var kx = unitById(kn);
+      h += '<div class="row" style="margin-top:6px;flex-wrap:wrap"><button class="btn sm" onclick="sessionStudy(\''+q.id+'\')">📚 关联知识点：'+esc(kx.no+' '+kx.title)+'</button><span class="muted" style="margin-left:8px">可进入做题/背题/敲记</span></div>';
+    }
   }
   h += '<div class="nav"><button class="btn" onclick="quitSession()">退出</button>'
     +'<span><button class="btn" onclick="nav(-1)" '+(session.i===0?'disabled':'')+'>上一题</button> '
@@ -1946,11 +1990,15 @@ function subHeader(cid, s, opts){
     +'</div>'
     +'<div class="qtext">'+sanitize(caseFmt(s.text)||'<i class="muted">题干缺失</i>')+'</div>';
 }
-function subBody(cid, s){
+function subBody(cid, s, opts){
+  opts = opts || {};
   var key = cid+'#'+s.no, r = store.caseRec[key]||{};
   var kk = key.replace('#','_');
-  var h = '<textarea id="ta_'+kk+'" placeholder="在此输入你的作答（用于AI评分）…" oninput="saveDraft(\''+key+'\', this.value)">'+esc(r.draft||'')+'</textarea>'
-    +'<div class="muted" id="st_'+kk+'" style="font-size:12px;margin-top:2px">'+subStatusText(key)+'</div>'
+  var fresh = !!opts.fresh;
+  if(fresh) freshDrafts[key] = 1; else delete freshDrafts[key];
+  var h = '<textarea id="ta_'+kk+'" placeholder="'+(fresh? '重做模式：输入新的作答（用于AI评分）…' : '在此输入你的作答（用于AI评分）…')+'" oninput="saveDraft(\''+key+'\', this.value)">'+(fresh? '' : esc(r.draft||''))+'</textarea>'
+    +'<div class="muted" id="st_'+kk+'" style="font-size:12px;margin-top:2px">'+(fresh? freshStatusText(key) : subStatusText(key))+'</div>'
+    +((fresh && r.draftPrev)? '<div class="muted" id="rb_'+kk+'" style="font-size:12px"><span class="pcase" onclick="restorePrevDraft(\''+key+'\')">↩ 恢复上次作答</span></div>' : '')
     +'<div class="row" style="margin-top:8px">'
     +'<button class="btn sm pri" onclick="aiGrade(\''+key+'\')">🤖 AI评分</button>'
     +'<button class="btn sm" onclick="toggleReveal(\''+key+'\',\'a\')">显示参考答案</button>'
@@ -2012,12 +2060,39 @@ function subStatusText(key){
   if(typeof r.draft==='string' && r.draft.trim()!=='') parts.push('已保存草稿'+(r.ts? ' '+fmtClock(r.ts):''));
   return parts.length? '✓ '+parts.join(' · ') : '未作答（输入/AI评分/自评后自动保存）';
 }
+var freshDrafts = {}; // 重做模式下文本框留空的 key（首次输入时备份旧草稿）
+function freshStatusText(key){
+  var r = store.caseRec[key]||{};
+  var parts = ['🔄 重做模式：文本框已清空'];
+  if(r.m!==undefined) parts.push('已自评：'+(r.m===2?'会':(r.m===1?'模糊':'不会')));
+  if(r.ai) parts.push('AI已评 '+((r.ai.score!==undefined)? (r.ai.score+'/'+(r.ai.max||'?')) : ''));
+  if(typeof r.draft==='string' && r.draft.trim()!=='') parts.push('旧草稿已保存'+(r.ts? ' '+fmtClock(r.ts):''));
+  return parts.join(' · ');
+}
+function restorePrevDraft(key){
+  var r = store.caseRec[key]||{};
+  if(!r.draftPrev){ toast('没有可恢复的旧作答'); return; }
+  var ta = document.getElementById('ta_'+key.replace('#','_'));
+  if(ta) ta.value = r.draftPrev;
+  saveDraft(key, r.draftPrev);
+  toast('已恢复上次作答');
+}
 function updateSubStatus(key){
   var el = document.getElementById('st_'+key.replace('#','_'));
   if(el) el.textContent = subStatusText(key);
 }
 function saveDraft(key, txt){
   var r = store.caseRec[key] || {};
+  if(freshDrafts[key] && typeof r.draft==='string' && r.draft.trim()!=='' && !r.draftPrev){
+    r.draftPrev = r.draft;
+    var sEl = document.getElementById('st_'+key.replace('#','_'));
+    if(sEl && sEl.parentNode && !document.getElementById('rb_'+key.replace('#','_'))){
+      var d = document.createElement('div'); d.id = 'rb_'+key.replace('#','_');
+      d.className = 'muted'; d.style.fontSize = '12px';
+      d.innerHTML = '<span class="pcase" onclick="restorePrevDraft(\''+key+'\')">↩ 恢复上次作答</span>';
+      sEl.parentNode.insertBefore(d, sEl.nextSibling);
+    }
+  }
   r.draft = txt; r.ts = Date.now(); store.caseRec[key] = r;
   var el = document.getElementById('st_'+key.replace('#','_'));
   if(el) el.textContent = '输入中…';
@@ -2318,7 +2393,9 @@ function vUnit(uid){
     +'<span class="tag '+(u.subject===1?'s1':'s2')+'">'+esc(u.no)+'</span> '+esc(u.title)
     +((u.freq||0)>0?' <span class="tag warn">近5年考过'+u.freq+'次</span>':'')+'</h2>'
     +'<div class="row">'
-    +(returnToCase? '<button class="btn sm pri" onclick="backToCase()">← 返回案例题</button>':'')
+    +((studyReturn&&studyReturn.kind==='case'&&cwSession)? '<button class="btn sm pri" onclick="studyBack()">← 返回案例错题重做</button>':'')
+    +((studyReturn&&studyReturn.kind==='choice'&&session)? '<button class="btn sm pri" onclick="studyBack()">← 返回错题刷题</button>':'')
+    +(returnToCase? '<button class="btn sm" onclick="backToCase()">← 返回案例题</button>':'')
     +(u.ch? '<button class="btn sm" onclick="openTB('+u.ch+')">📖 教材全文</button>':'')
     +'<button class="btn sm" onclick="go(\'know\')">返回</button></div></div>'
     +'<div class="muted" style="margin-top:6px">掌握状态: '+(st? (mature(uid)?'熟练 · 间隔'+st.ivl+'天':'学习中 · 间隔'+st.ivl+'天'):'未学')+'</div>'
