@@ -229,7 +229,7 @@ details summary{cursor:pointer;color:var(--pri);font-size:13.5px;margin:6px 0}
 <script src="data/explain.js" onerror="this.remove()"></script>
 <script>
 'use strict';
-var APP_VER = 'v1.6';
+var APP_VER = 'v1.7';
 console.log('信息安全工程师复习系统 ' + APP_VER);
 window.onerror = function(m, s, l){ var e=document.getElementById('errbox'); e.style.display='block'; e.textContent += m+' @'+l+'\n'; };
 
@@ -1051,25 +1051,44 @@ function parseInlineOptions(stem, num){
 function wrongCfgRow(prefix){
   var s = store.settings;
   var n = +s.wrongN || 20, o = s.wrongOrder || 'random', m = +s.wrongMaster || 2;
-  return '<span class="muted">数量:</span><select id="'+prefix+'N" onchange="saveWrongCfgFrom([\''+prefix+'N\',\''+prefix+'O\',\''+prefix+'M\'])">'
-    + ['10','20','50','999'].map(function(x){ return '<option value="'+x+'"'+(n===+x?' selected':'')+'>'+(x==='999'?'全部':x)+'</option>'; }).join('')
-    + '</select><span class="muted">顺序:</span><select id="'+prefix+'O" onchange="saveWrongCfgFrom([\''+prefix+'N\',\''+prefix+'O\',\''+prefix+'M\'])">'
+  var preset = ['10','20','50','999'].indexOf(String(n)) >= 0;
+  var ids = '[\''+prefix+'N\',\''+prefix+'O\',\''+prefix+'M\']';
+  return '<span class="muted">数量:</span><select id="'+prefix+'N" onchange="onWrongNChange(\''+prefix+'\','+ids+')">'
+    + ['10','20','50','999'].map(function(x){ return '<option value="'+x+'"'+((preset&&n===+x)?' selected':'')+'>'+(x==='999'?'全部':x)+'</option>'; }).join('')
+    + '<option value="custom"'+(preset?'':' selected')+'>自定义…</option></select>'
+    + '<input type="number" id="'+prefix+'Nc" min="1" max="999" value="'+((preset)?'':n)+'" placeholder="1-999" style="width:76px;display:'+(preset?'none':'inline-block')+'" onchange="saveWrongCfgFrom('+ids+')">'
+    + '<span class="muted">顺序:</span><select id="'+prefix+'O" onchange="saveWrongCfgFrom('+ids+')">'
     + '<option value="random"'+(o==='random'?' selected':'')+'>随机</option><option value="seq"'+(o==='seq'?' selected':'')+'>顺序</option></select>'
-    + '<span class="muted">掌握:</span><select id="'+prefix+'M" onchange="saveWrongCfgFrom([\''+prefix+'N\',\''+prefix+'O\',\''+prefix+'M\'])">'
+    + '<span class="muted">掌握:</span><select id="'+prefix+'M" onchange="saveWrongCfgFrom('+ids+')">'
     + ['1','2','3'].map(function(x){ return '<option value="'+x+'"'+(m===+x?' selected':'')+'>连对'+x+'次</option>'; }).join('')
     + '</select>';
 }
+function onWrongNChange(prefix, ids){
+  var sel = document.getElementById(prefix+'N');
+  var inp = document.getElementById(prefix+'Nc');
+  if(!sel || !inp) return;
+  if(sel.value==='custom'){ inp.style.display='inline-block'; inp.focus(); }
+  else { inp.style.display='none'; saveWrongCfgFrom(ids); }
+}
 function saveWrongCfgFrom(ids){
-  var n=(document.getElementById(ids[0])||{}).value;
+  var selN = (document.getElementById(ids[0])||{}).value;
   var o=(document.getElementById(ids[1])||{}).value;
   var m=(document.getElementById(ids[2])||{}).value;
-  if(n) store.settings.wrongN = +n;
+  var n;
+  if(selN==='custom'){
+    n = +(document.getElementById(ids[0]+'c')||{}).value;
+    if(!n || n<1){ toast('请输入 1-999 的数量'); return; }
+    n = Math.min(999, Math.max(1, Math.round(n)));
+    var inp = document.getElementById(ids[0]+'c'); if(inp) inp.value = n;
+  } else n = +selN;
+  if(n) store.settings.wrongN = n;
   if(o) store.settings.wrongOrder = o;
   if(m) store.settings.wrongMaster = +m;
   var ok = saveSettings();
-  toast(ok? '错题本设置已保存' : '保存失败：浏览器存储不可用');
+  toast(ok? '错题本设置已保存（数量 '+store.settings.wrongN+'）' : '保存失败：浏览器存储不可用');
   if(currentView==='wrong') vWrong(); else if(currentView==='settings') vSettings();
 }
+function wrongDrillN(total){ var s=store.settings; return (+s.wrongN===999)? total : Math.min(+s.wrongN||20, total); }
 function startWrongDrill(){
   var s = store.settings;
   var ids = wrongList().filter(function(q){ return DB.questions[q]; });
@@ -1080,6 +1099,73 @@ function startWrongDrill(){
   ids = ids.slice(0, n);
   session = {ids:ids, i:0, answered:false, wrongDrill:true};
   go('am',{session:1});
+}
+/* ---- 案例错题重做（专用页，在错题本内）---- */
+var cwSession = null;
+function startCaseWrongDrill(){
+  var s = store.settings;
+  var ids = wrongList().filter(function(k){ return k.indexOf('#')>0 && DB.cases[k.split('#')[0]]; });
+  if(!ids.length){ toast('没有可刷的案例错题'); return; }
+  if((s.wrongOrder||'random')==='random') ids.sort(function(){ return Math.random()-.5; });
+  else ids.sort(function(a,b){
+    var ca=DB.cases[a.split('#')[0]], cb=DB.cases[b.split('#')[0]];
+    if(ca && cb){
+      var ka=[ca.year,ca.half,ca.cn,+a.split('#')[1]], kb=[cb.year,cb.half,cb.cn,+b.split('#')[1]];
+      for(var i=0;i<4;i++){ if(ka[i]!==kb[i]) return ka[i]-kb[i]; }
+    }
+    return 0;
+  });
+  var n = (+s.wrongN===999)? ids.length : Math.min(+s.wrongN||20, ids.length);
+  cwSession = {ids: ids.slice(0, n), i: 0};
+  go('wrong');
+}
+function cwExit(){ cwSession = null; vWrong(); }
+function cwGo(d){
+  if(!cwSession){ vWrong(); return; }
+  cwSession.i += d;
+  if(cwSession.i < 0) cwSession.i = 0;
+  if(cwSession.i >= cwSession.ids.length){
+    var total = cwSession.ids.length;
+    cwSession = null;
+    view.innerHTML = '<div class="card" style="text-align:center;padding:36px"><h2>🎉 本轮案例错题已刷完</h2>'
+      + '<p class="muted">共 '+total+' 题</p>'
+      + '<div class="row" style="justify-content:center;margin-top:12px"><button class="btn pri" onclick="vWrong()">返回错题本</button></div></div>';
+    return;
+  }
+  vCaseWrong();
+}
+function cwAdvance(m){
+  toast(m===2? '已掌握，移出错题本 · 下一题' : '留在错题本 · 下一题');
+  cwGo(1);
+}
+function vCaseWrong(){
+  if(!cwSession){ vWrong(); return; }
+  var k = cwSession.ids[cwSession.i];
+  var p = k.split('#'), c = DB.cases[p[0]];
+  var sub = c && c.qs.find(function(x){ return x.no==p[1]; });
+  if(!sub){ cwGo(1); return; }
+  var N = cwSession.ids.length, i = cwSession.i;
+  var h = '<div class="card"><div class="row" style="justify-content:space-between">'
+    + '<b>🎯 案例错题重做 · 第 '+(i+1)+' / '+N+' 题</b>'
+    + '<button class="btn sm" onclick="cwExit()">退出</button></div>'
+    + '<div class="bar" style="margin:8px 0"><i style="width:'+Math.round(i/N*100)+'%"></i></div>'
+    + '<p class="muted">答「会」即移出错题本并自动下一题；「模糊/不会」留在错题本。数量与顺序见错题本上方设置。</p></div>';
+  h += '<div class="card">' + subHeader(p[0], sub, {noRel:true, caseTag:true}) + caseCtxHTML(p[0], sub) + subBody(p[0], sub) + '</div>';
+  h += '<div class="card"><div class="nav"><button class="btn" onclick="cwExit()">退出</button>'
+    + '<span><button class="btn" onclick="cwGo(-1)" '+(i===0?'disabled':'')+'>上一题</button> '
+    + '<button class="btn" onclick="cwGo(1)">跳过 / 下一题</button></span></div></div>';
+  view.innerHTML = h;
+}
+/* ---- 手册错题重做（复用抽卡手册卡界面）---- */
+function startHbWrongDrill(){
+  var s = store.settings;
+  var ids = wrongList().filter(function(k){ return !!hbItem(k); });
+  if(!ids.length){ toast('没有可刷的手册错题'); return; }
+  if((s.wrongOrder||'random')==='random') ids.sort(function(){ return Math.random()-.5; });
+  var n = (+s.wrongN===999)? ids.length : Math.min(+s.wrongN||20, ids.length);
+  ids = ids.slice(0, n);
+  ksession = {ids: ids, isNewMap: {}, i: 0, flipped: false, answered: false, hbDrill: true};
+  go('know');
 }
 function hbMaster(id){
   var r = store.hb[id] || {n:0};
@@ -1958,7 +2044,7 @@ function markCase(key, m){
   updateSubStatus(key);
   if(exam) return;
   if(currentView==='know'){ if(typeof updateUnitQProg==='function') updateUnitQProg(); return; }
-  if(currentView==='wrong'){ vWrong(); return; }
+  if(currentView==='wrong'){ if(cwSession){ cwAdvance(m); return; } vWrong(); return; }
   if(currentView!=='pm') return;
   var cid = key.split('#')[0];
   var cur = currentPaperId && DB.papers.find(x=>x.id===currentPaperId);
@@ -2558,7 +2644,7 @@ function renderKCard(){
   var info = cardInfo(id);
   var st = srsGet(id);
   var h = '<div class="card">'
-    +'<div class="row" style="justify-content:space-between"><span class="muted">'+(ksession.i+1)+' / '+ksession.ids.length
+    +'<div class="row" style="justify-content:space-between"><span class="muted">'+(ksession.hbDrill? '<span class="tag s3">🃏 手册错题重做</span> ':'')+(ksession.i+1)+' / '+ksession.ids.length
     +(!st?' · <span class="tag s1">新卡</span>':(st.ivl?' · 间隔'+st.ivl+'天':''))+'</span>'
     +'<span class="row"><button class="btn sm" onclick="kCardDetail(\''+id+'\')">详情</button>'
     +'<button class="btn sm" onclick="ksession=null;vKnow()">退出</button></span></div>';
@@ -2780,13 +2866,18 @@ function startKnowN(){
 
 /* ================= 错题本 ================= */
 function vWrong(){
+  if(cwSession){ vCaseWrong(); return; }
   var list = wrongList();
   var qc = list.filter(function(q){ return DB.questions[q]; }).length;
-  var s = store.settings;
-  var drillN = (+s.wrongN===999)? qc : Math.min(+s.wrongN||20, qc);
+  var cc = list.filter(function(k){ return k.indexOf('#')>0 && DB.cases[k.split('#')[0]]; }).length;
+  var hc = list.filter(function(k){ return !!hbItem(k); }).length;
   var h = '<div class="card"><h2>错题本 ('+list.length+')</h2>'
-    + '<div class="row" style="margin-top:6px">'+wrongCfgRow('w')
-    + '<button class="btn pri" onclick="startWrongDrill()" '+(qc?'':'disabled')+'>🎯 开始刷错题 ('+drillN+'/'+qc+'题)</button></div>'
+    + '<div class="row" style="margin-top:6px">'+wrongCfgRow('w')+'</div>'
+    + '<div class="row" style="margin-top:8px">'
+    + '<button class="btn pri" onclick="startWrongDrill()" '+(qc?'':'disabled')+'>🎯 刷选择题错题 ('+wrongDrillN(qc)+'/'+qc+')</button>'
+    + '<button class="btn pri" onclick="startCaseWrongDrill()" '+(cc?'':'disabled')+'>🎯 刷案例错题 ('+wrongDrillN(cc)+'/'+cc+')</button>'
+    + '<button class="btn pri" onclick="startHbWrongDrill()" '+(hc?'':'disabled')+'>🃏 刷手册错题 ('+wrongDrillN(hc)+'/'+hc+')</button>'
+    + '</div>'
     + '<p class="muted">只有<b>做错过</b>的题才会进入错题本；在任意模块连对 '+wrongMasterN()+' 次（或点“已掌握”）即可移出。重做不会重置连对。</p>';
   if(!list.length) h+='<p class="muted">空的，继续保持！✨</p>';
   h += '</div><div class="card">';
@@ -2801,7 +2892,7 @@ function vWrong(){
       if(!c) return;
       var sub = c.qs.find(function(s){ return s.no==pp[1]; });
       h += '<div class="wrongs-item"><span><span class="tag s2">'+c.year+halfName(c.half)+'案例'+c.cn+'</span>问题'+pp[1]+' '+esc((sub&&sub.text||'').slice(0,40))+'…</span>'
-        +'<span><button class="btn sm" onclick="markCase(\''+q+'\',2)">已掌握</button> <button class="btn sm" onclick="openPaper(\'P-'+c.year+'-'+c.half+'-2\')">查看</button></span></div>';
+        +'<span><button class="btn sm" onclick="markCase(\''+q+'\',2)">已掌握</button> <button class="btn sm" onclick="openCaseSub(\''+pp[0]+'\','+pp[1]+')">查看</button></span></div>';
     } else if(hbItem(q)){
       var hb = hbItem(q);
       var plain = String(hb.a||hb.html||'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').slice(0,50);
@@ -2811,6 +2902,15 @@ function vWrong(){
   });
   h += '</div>';
   view.innerHTML = h;
+}
+function openCaseSub(cid, no){
+  var p = DB.papers.find(function(x){ return x.subject===2 && x.cids.indexOf(cid)>=0; });
+  if(!p){ toast('未找到该题所在卷'); return; }
+  vCasePaper(p);
+  setTimeout(function(){
+    var el = document.getElementById('sq_'+cid+'_'+no);
+    if(el) el.scrollIntoView({behavior:'smooth', block:'center'});
+  }, 80);
 }
 function resolveOne(q){ var r=store.rec[q]||{}; r.ok=1; r.streak=wrongMasterN(); store.rec[q]=r; save(); vWrong(); }
 function redoWrongAll(){
