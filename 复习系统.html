@@ -242,7 +242,7 @@ details.dstepssum>summary{cursor:pointer;color:var(--pri,#3b82f6)}
 <script src="data/drills.js" onerror="this.remove()"></script>
 <script>
 'use strict';
-var APP_VER = 'v2.8';
+var APP_VER = 'v2.9';
 console.log('信息安全工程师复习系统 ' + APP_VER);
 window.onerror = function(m, s, l){ var e=document.getElementById('errbox'); e.style.display='block'; e.textContent += m+' @'+l+'\n'; };
 
@@ -1326,7 +1326,7 @@ function drillItemHTML(uid, it, idx){
   var kk=drillKk(it.id), r=drillRec(it.id), answered=(r.ok!==undefined);
   var h = '<div class="subq" id="dq_'+kk+'">'
     + '<div class="hd">【练习'+idx+'】<span class="tag s1">'+drillTypeName(it.type)+'</span> '
-    + (it.source? '<span class="tag gray" style="font-size:11px">'+esc(it.source)+'</span>':'')+'</div>'
+    + (it.source? '<span class="tag gray" style="font-size:11px">'+esc(it.source)+'</span>':'')+' '+starBtn(it.id)+'</div>'
     + '<div class="qtext">'+sanitize(caseFmt(it.q))+'</div>';
   if(it.type==='choice' || it.type==='judge'){
     var opts = it.type==='judge'? [{key:'T',text:'✓ 正确'},{key:'F',text:'✗ 错误'}] : (it.options||[]);
@@ -2042,6 +2042,68 @@ function wrongListPrintHTML(withAna){
   if(!list.length) h += '<p class="muted">当前没有错题 🎉</p>';
   return h;
 }
+/* ================= v2.9-E 重点题收藏（⭐） ================= */
+function starMap(){ if(!store.star) store.star={}; return store.star; }
+function isStarred(id){ return !!starMap()[id]; }
+function starIds(){ var m=starMap(); return Object.keys(m).sort(function(a,b){ return m[b]-m[a]; }); }
+function starBtnClick(btn, id){
+  var m = starMap();
+  if(m[id]){ delete m[id]; btn.textContent='☆'; btn.style.color=''; btn.style.borderColor=''; toast('已取消星标'); }
+  else { m[id]=Date.now(); btn.textContent='⭐'; btn.style.color='#f59e0b'; btn.style.borderColor='#f59e0b'; toast('⭐ 已加入重点清单（错题本页可查看）'); }
+  save();
+  if(currentView==='star') vStarList();
+}
+function starBtn(id){
+  var on = isStarred(id);
+  return '<button class="btn sm" onclick="event.stopPropagation();starBtnClick(this,\''+id+'\')" title="'+(on?'取消星标':'加入重点清单')+'" style="padding:2px 7px;'+(on?'color:#f59e0b;border-color:#f59e0b':'')+'">'+(on?'⭐':'☆')+'</button>';
+}
+function startStarDrill(){
+  var ids = starIds().filter(function(k){ return DB.questions[k]; });
+  if(!ids.length){ toast('重点清单里还没有选择题'); return; }
+  session = {ids:ids, i:0, answered:false};
+  go('am', {session:1});
+}
+function starOpen(k){
+  if(DB.questions[k]){ redoOne(k); return; }
+  if(store.caseRec[k] && store.caseRec[k].m!==undefined){ var pp=k.split('#'); openCaseSub(pp[0], +pp[1]); return; }
+  if(hbItem(k)){ go('sprint'); return; }
+  if(drillById(k)){ openDrill(k); return; }
+  toast('未找到该题');
+}
+function vStarList(){
+  var ids = starIds();
+  var q = ids.filter(function(k){ return DB.questions[k]; });
+  var h = '<div class="card"><h2>⭐ 重点清单（'+ids.length+'）</h2>'
+    + '<p class="muted">在选择题、真题卡、专项练习上点 ☆ 即可加入；考前集中过一遍最方便。</p>'
+    + '<div class="row" style="margin-top:8px"><button class="btn pri" onclick="startStarDrill()" '+(q.length?'':'disabled')+'>🎯 刷重点选择题 ('+q.length+')</button>'
+    + '<button class="btn" onclick="vWrong()">← 返回错题本</button>'
+    + '<button class="btn sm" onclick="if(confirm(\'清空重点清单？\')){store.star={};save();vStarList();}">清空清单</button></div></div>';
+  if(!ids.length){ view.innerHTML = h + '<div class="card"><p class="muted">还没有星标题目。在题目右下角点 ☆ 即可加入。</p></div>'; currentView='star'; return; }
+  h += '<div class="card">';
+  ids.forEach(function(k){
+    var row = '';
+    if(DB.questions[k]){
+      var qq=DB.questions[k], r=store.rec[k]||{};
+      row = '<span><span class="tag s1">'+qq.year+halfName(qq.half)+' 第'+qq.num+'题</span> '+esc(plainText(qPreviewText(qq)).slice(0,46))+'…<br><span class="muted">'+(r.a!==undefined? ('你答：'+r.a+'　正确：'+(qq.answer||'?')) : '未做')+'</span></span>';
+    } else if(store.caseRec[k] && store.caseRec[k].m!==undefined){
+      var pp=k.split('#'), cc=DB.cases[pp[0]];
+      if(!cc){ return; }
+      var sub=(cc.qs||[]).find(function(s){ return s.no==pp[1]; });
+      row = '<span><span class="tag s2">'+cc.year+halfName(cc.half)+' 案例'+cc.cn+'</span> 问题'+pp[1]+' '+esc(plainText(sub&&sub.text||'').slice(0,40))+'…</span>';
+    } else if(hbItem(k)){
+      var hh=hbItem(k);
+      row = '<span><span class="tag s3">冲刺手册</span>'+esc(plainText(hh.q||hh.title||'')).slice(0,50)+'…</span>';
+    } else if(drillById(k)){
+      var o=drillById(k), it=o.item;
+      row = '<span><span class="tag s3">练习·'+drillTypeName(it.type)+'</span> '+esc(plainText(it.q)).slice(0,46)+'…<br><span class="muted">'+esc(o.uid)+' · '+(it.source? esc(it.source):'')+'</span></span>';
+    }
+    h += '<div class="wrongs-item">'+row
+      + '<span><button class="btn sm" onclick="starOpen(\''+k+'\')">重做/查看</button> <button class="btn sm" onclick="starToggle2(\''+k+'\')">取消星标</button></span></div>';
+  });
+  h += '</div>';
+  view.innerHTML = h; currentView = 'star';
+}
+function starToggle2(k){ var m=starMap(); if(m[k]) delete m[k]; else m[k]=Date.now(); save(); vStarList(); }
 /* ================= 视图框架 ================= */
 var view = document.getElementById('view');
 var currentView = 'home';
@@ -2705,7 +2767,7 @@ function renderSession(){
   var h = '<div class="card">'
     +'<div class="row" style="justify-content:space-between"><span class="muted">'
     +(session.wrongDrill? ('🎯 错题重做 · 连对 <b>'+(r0.streak||0)+'</b>/'+need) : (q.year+halfName(q.half)+'上午 · 第 '+q.num+' 题'))
-    +'</span><span class="muted">'+(session.i+1)+' / '+session.ids.length+'</span></div>'
+    +'</span><span class="muted">'+starBtn(q.id)+' '+(session.i+1)+' / '+session.ids.length+'</span></div>'
     +'<div class="bar" style="margin:8px 0"><i style="width:'+Math.round(session.i/session.ids.length*100)+'%"></i></div>'
     +(g? '<div class="ana">'+richBlock(g.stem)+(g.translation?'<details><summary class="muted">参考译文</summary><pre>'+esc(g.translation)+'</pre></details>':'')+'</div>':'')
     +'<div class="qtext">'+richQ(stemShow)+'</div>';
@@ -3310,7 +3372,7 @@ function unitQInner(qid, mode){
   var ep = CARDS.meta.qpoint[qid];
   var r = store.rec[qid]||{};
   var stemHTML = q.stem? richQ(q.stem) : (q.group? '<span class="muted">（组题：请阅读上方共用材料后作答）</span>' : '<span class="muted">(题干缺失)</span>');
-  var head = '<div class="hd">'+q.year+halfName(q.half)+' 第'+q.num+'题'+(ep?' · <span class="muted">考点: '+esc(ep)+'</span>':'')+'</div>'
+  var head = '<div class="hd">'+q.year+halfName(q.half)+' 第'+q.num+'题'+(ep?' · <span class="muted">考点: '+esc(ep)+'</span>':'')+' '+starBtn(qid)+'</div>'
     + '<div class="qtext">'+stemHTML+'</div>';
   var opts = q.options||[];
   if(mode==='read' || r.a!==undefined){
@@ -3635,7 +3697,7 @@ function renderQCard(id){
   var g = q.group? DB.groups[q.group]:null;
   var ep = CARDS.meta.qpoint[id];
   var h = '<span class="tag s1">真题卡 · '+q.year+halfName(q.half)+'第'+q.num+'题</span>'
-    +(ep?' <span class="tag gray">考点:'+esc(ep)+'</span>':'')
+    +(ep?' <span class="tag gray">考点:'+esc(ep)+'</span>':'')+' '+starBtn(id)
     +(g? '<div class="ana">'+richBlock(g.stem)+'</div>':'')
     +'<div class="qtext">'+richQ(q.stem)+'</div>';
   if(ksession.answered){
@@ -3810,6 +3872,7 @@ function vWrong(){
     + '<button class="btn pri" onclick="startCaseWrongDrill()" '+(cc?'':'disabled')+'>🎯 刷案例错题 ('+wrongDrillN(cc)+'/'+cc+')</button>'
     + '<button class="btn pri" onclick="startHbWrongDrill()" '+(hc?'':'disabled')+'>🃏 刷手册错题 ('+wrongDrillN(hc)+'/'+hc+')</button>'
     + '<button class="btn pri" onclick="startDrillWrongDrill()" '+(dc?'':'disabled')+'>🎯 刷练习错题 ('+wrongDrillN(dc)+'/'+dc+')</button>'
+    + '<button class="btn" onclick="vStarList()">⭐ 重点清单 ('+starIds().length+')</button>'
     + '<button class="btn" onclick="vWrongPrint()">🖨 导出 / 打印错题清单</button>'
     + '</div>'
     + '<p class="muted">只有<b>做错过</b>的题才会进入错题本；在任意模块连对 '+wrongMasterN()+' 次（或点“已掌握”）即可移出。重做不会重置连对。</p>';
