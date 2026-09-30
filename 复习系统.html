@@ -194,6 +194,11 @@ details summary{cursor:pointer;color:var(--pri);font-size:13.5px;margin:6px 0}
   #printArea th,#printArea td{border:1px solid #666;padding:4px 6px;vertical-align:top}
   #printArea img{max-width:100%}
 }
+/* 题干/解析中的表格与图片（richQ 渲染） */
+.qtext table,.ana table{width:100%;max-width:100%;border-collapse:collapse;margin:8px 0;font-size:13px;display:block;overflow-x:auto}
+.qtext table td,.qtext table th,.ana table td,.ana table th{border:1px solid var(--line);padding:3px 7px;text-align:center;white-space:nowrap}
+.qtext table tr:nth-child(even),.ana table tr:nth-child(even){background:rgba(127,127,127,.06)}
+.qtext img,.ana img{max-width:100%;height:auto;border-radius:6px;border:1px solid var(--line)}
 .dsteps{margin-top:6px;background:var(--bg2,#f7f8fa);border-left:3px solid var(--pri,#3b82f6);border-radius:6px;padding:8px 10px;font-family:ui-monospace,Consolas,monospace;font-size:13px;line-height:1.75;white-space:normal}
 .dsteps .ds{display:flex;gap:8px;margin:2px 0}
 .dsteps .ds>.n{color:var(--pri,#3b82f6);font-weight:700;min-width:24px;text-align:right}
@@ -237,7 +242,7 @@ details.dstepssum>summary{cursor:pointer;color:var(--pri,#3b82f6)}
 <script src="data/drills.js" onerror="this.remove()"></script>
 <script>
 'use strict';
-var APP_VER = 'v2.6';
+var APP_VER = 'v2.7';
 console.log('信息安全工程师复习系统 ' + APP_VER);
 window.onerror = function(m, s, l){ var e=document.getElementById('errbox'); e.style.display='block'; e.textContent += m+' @'+l+'\n'; };
 
@@ -476,9 +481,23 @@ function caseDots(cid){
 }
 function qPreviewText(q, n){
   n = n || 42;
-  if(q.stem) return q.stem;
-  var g = q.group? DB.groups[q.group] : null;
-  return g? ('[组题] '+g.stem) : '(题干缺失)';
+  var s = q.stem;
+  if(!s){ var g = q.group? DB.groups[q.group] : null; s = g? ('[组题] '+g.stem) : '(题干缺失)'; }
+  return plainText(s);
+}
+/* 去标签纯文本（用于列表/预览，避免出现 HTML 源码） */
+function plainText(s){
+  var t = String(s==null?'':s);
+  if(t.indexOf('<') < 0) return t;
+  var d = document.createElement('div'); d.innerHTML = t;
+  d.querySelectorAll('table').forEach(function(tb){
+    var rows = tb.querySelectorAll('tr'), txt = [];
+    [].slice.call(rows).forEach(function(tr){
+      txt.push([].slice.call(tr.querySelectorAll('td,th')).map(function(td){ return (td.textContent||'').trim(); }).join(' '));
+    });
+    tb.replaceWith(document.createTextNode(txt.length? ('［表格］'+txt.slice(0,2).join(' / ')+'…') : '［表格］'));
+  });
+  return (d.textContent||'').replace(/\s+/g,' ').trim();
 }
 function openCase(cid){
   var p = DB.papers.find(function(x){ return x.subject===2 && x.cids.indexOf(cid)>=0; });
@@ -779,6 +798,33 @@ function sanitize(html){
   d.querySelectorAll('script,style,iframe,object').forEach(function(n){ n.remove(); });
   d.querySelectorAll('*').forEach(function(n){ [].slice.call(n.attributes||[]).forEach(function(a){ if(/^on/i.test(a.name)) n.removeAttribute(a.name); }); });
   return d.innerHTML;
+}
+/* 富文本渲染（题干/解析用）：保留表格与图片等安全标签，过滤危险标签与事件属性 */
+var RICH_OK = {TABLE:1,THEAD:1,TBODY:1,TFOOT:1,TR:1,TD:1,TH:1,CAPTION:1,BR:1,IMG:1,B:1,I:1,U:1,EM:1,STRONG:1,SPAN:1,DIV:1,P:1,PRE:1,SUP:1,SUB:1,CODE:1,UL:1,OL:1,LI:1,HR:1,SMALL:1};
+function richQ(s){
+  var d = document.createElement('div'); d.innerHTML = String(s==null? '' : s);
+  d.querySelectorAll('script,style,iframe,object,embed,link,meta,form,input,button,textarea,select').forEach(function(n){ n.remove(); });
+  [].slice.call(d.querySelectorAll('*')).forEach(function(n){
+    if(!RICH_OK[n.tagName]){ n.replaceWith(document.createTextNode(n.textContent||'')); return; }
+    [].slice.call(n.attributes||[]).forEach(function(a){
+      var keep = (a.name==='colspan' || a.name==='rowspan');
+      if(n.tagName==='IMG' && (a.name==='src'||a.name==='alt'||a.name==='width'||a.name==='height')) keep = true;
+      if(!keep) n.removeAttribute(a.name);
+    });
+    if(n.tagName==='IMG'){
+      var src = n.getAttribute('src')||'';
+      if(/^(assets\/|\.\/assets\/|data:image\/)/i.test(src)) n.setAttribute('loading','lazy');
+      else n.remove();
+    }
+  });
+  return d.innerHTML;
+}
+function richHasHTML(s){ return /<(table|img|div|p|ul|ol|br|span|b|i|em|strong|sup|sub|pre)\b/i.test(String(s==null?'':s)); }
+/* 块级富文本：含 HTML 用富文本，否则保持等宽 <pre> 观感 */
+function richBlock(s){
+  var t = String(s==null? '' : s);
+  if(!t) return '';
+  return richHasHTML(t)? richQ(t) : '<pre>'+esc(t)+'</pre>';
 }
 var _t;
 function toast(m){ var t=document.getElementById('toast'); t.textContent=m; t.classList.add('show'); clearTimeout(_t); _t=setTimeout(function(){t.classList.remove('show');},2200); }
@@ -2268,8 +2314,8 @@ function renderSession(){
     +(session.wrongDrill? ('🎯 错题重做 · 连对 <b>'+(r0.streak||0)+'</b>/'+need) : (q.year+halfName(q.half)+'上午 · 第 '+q.num+' 题'))
     +'</span><span class="muted">'+(session.i+1)+' / '+session.ids.length+'</span></div>'
     +'<div class="bar" style="margin:8px 0"><i style="width:'+Math.round(session.i/session.ids.length*100)+'%"></i></div>'
-    +(g? '<div class="ana"><pre>'+esc(g.stem)+'</pre>'+(g.translation?'<details><summary class="muted">参考译文</summary><pre>'+esc(g.translation)+'</pre></details>':'')+'</div>':'')
-    +'<div class="qtext">'+esc(stemShow)+'</div>';
+    +(g? '<div class="ana">'+richBlock(g.stem)+(g.translation?'<details><summary class="muted">参考译文</summary><pre>'+esc(g.translation)+'</pre></details>':'')+'</div>':'')
+    +'<div class="qtext">'+richQ(stemShow)+'</div>';
   if(opts && opts.length===4){
     opts.forEach(function(o){
       var cls = 'opt';
@@ -2284,7 +2330,7 @@ function renderSession(){
     var rNow = store.rec[q.id] || {};
     h += '<div class="ana"><b>'+(session.correct?'✅ 答对':'❌ 答错')+'</b>'+(q.answer?'　正确答案: <b>'+q.answer+'</b>':'　<span class="tag warn">源文件缺失答案(可在设置配置AI后于知识点模块补全)</span>')
       +(session.wrongDrill? '<div class="muted" style="margin-top:4px">本题连对：'+(rNow.streak||0)+'/'+need+((rNow.streak||0)>=need?' ✅ 已掌握（移出错题本）':'')+'</div>':'')
-      +(q.analysis? '<pre>'+esc(q.analysis)+'</pre>':'')+'</div>';
+      +(q.analysis? richBlock(q.analysis):'')+'</div>';
     var kn = CARDS.meta.qunit[q.id] || ((CARDS.meta.qunitX[q.id]||[])[0]);
     if(kn && unitById(kn)){
       var kx = unitById(kn);
@@ -2870,7 +2916,7 @@ function unitQInner(qid, mode){
   if(!q) return '';
   var ep = CARDS.meta.qpoint[qid];
   var r = store.rec[qid]||{};
-  var stemHTML = q.stem? esc(q.stem) : (q.group? '<span class="muted">（组题：请阅读上方共用材料后作答）</span>' : '<span class="muted">(题干缺失)</span>');
+  var stemHTML = q.stem? richQ(q.stem) : (q.group? '<span class="muted">（组题：请阅读上方共用材料后作答）</span>' : '<span class="muted">(题干缺失)</span>');
   var head = '<div class="hd">'+q.year+halfName(q.half)+' 第'+q.num+'题'+(ep?' · <span class="muted">考点: '+esc(ep)+'</span>':'')+'</div>'
     + '<div class="qtext">'+stemHTML+'</div>';
   var opts = q.options||[];
@@ -2883,7 +2929,7 @@ function unitQInner(qid, mode){
     }).join('');
     var res = (r.a!==undefined)? (r.ok? ' <b style="color:var(--ok)">✅ 答对</b>' : ' <b style="color:var(--ng)">❌ 答错</b>') : '';
     return head + html
-      + '<div class="ana">'+res+' 正确答案: '+(q.answer||'?')+(q.analysis?'<pre>'+esc(q.analysis)+'</pre>':'')+'</div>'
+      + '<div class="ana">'+res+' 正确答案: '+(q.answer||'?')+(q.analysis? richBlock(q.analysis):'')+'</div>'
       + ((mode==='quiz' && r.a!==undefined)? '<div class="row" style="margin-top:6px"><button class="btn sm" onclick="unitQRedo(\''+qid+'\')">重做本题</button></div>' : '');
   }
   return head + opts.map(function(o){
@@ -2927,7 +2973,7 @@ function unitQuizHTML(uid){
     if(q.group){
       if(q.group !== lastGroup){
         var g = DB.groups[q.group];
-        if(g) pre += '<div class="ana" style="margin-top:10px"><b>📖 组题材料（共用）</b><pre>'+esc(g.stem)+'</pre>'
+        if(g) pre += '<div class="ana" style="margin-top:10px"><b>📖 组题材料（共用）</b>'+richBlock(g.stem)
           +(g.translation? '<details><summary class="muted">参考译文</summary><pre>'+esc(g.translation)+'</pre></details>':'')+'</div>';
       }
       lastGroup = q.group;
@@ -3197,8 +3243,8 @@ function renderQCard(id){
   var ep = CARDS.meta.qpoint[id];
   var h = '<span class="tag s1">真题卡 · '+q.year+halfName(q.half)+'第'+q.num+'题</span>'
     +(ep?' <span class="tag gray">考点:'+esc(ep)+'</span>':'')
-    +(g? '<div class="ana"><pre>'+esc(g.stem)+'</pre></div>':'')
-    +'<div class="qtext">'+esc(q.stem)+'</div>';
+    +(g? '<div class="ana">'+richBlock(g.stem)+'</div>':'')
+    +'<div class="qtext">'+richQ(q.stem)+'</div>';
   if(ksession.answered){
     q.options.forEach(function(o){
       var cls='opt disabled';
@@ -3206,7 +3252,7 @@ function renderQCard(id){
       h += '<button class="'+cls+'" disabled><b>'+o.key+'.</b> '+esc(o.text)+'</button>';
     });
     h += '<div class="ana"><b>'+(ksession.correct?'✅ 答对':'❌ 答错')+'</b>'+(q.answer?' 正确答案:'+q.answer:'')
-      +(q.analysis?'<pre>'+esc(q.analysis)+'</pre>':'')+'</div>';
+      +(q.analysis? richBlock(q.analysis):'')+'</div>';
     var uid2 = CARDS.meta.qunit[id] || ((CARDS.meta.qunitX[id]||[])[0]);
     if(uid2){ var ai2 = AI[uid2]||{};
       if(ai2.memo) h += '<div class="muted" style="margin-top:6px">🧩 '+esc(ai2.memo)+'</div>';
