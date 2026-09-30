@@ -194,6 +194,11 @@ details summary{cursor:pointer;color:var(--pri);font-size:13.5px;margin:6px 0}
   #printArea th,#printArea td{border:1px solid #666;padding:4px 6px;vertical-align:top}
   #printArea img{max-width:100%}
 }
+.dsteps{margin-top:6px;background:var(--bg2,#f7f8fa);border-left:3px solid var(--pri,#3b82f6);border-radius:6px;padding:8px 10px;font-family:ui-monospace,Consolas,monospace;font-size:13px;line-height:1.75;white-space:normal}
+.dsteps .ds{display:flex;gap:8px;margin:2px 0}
+.dsteps .ds>.n{color:var(--pri,#3b82f6);font-weight:700;min-width:24px;text-align:right}
+.dsteps .ds>span:last-child{flex:1;white-space:pre-wrap}
+details.dstepssum>summary{cursor:pointer;color:var(--pri,#3b82f6)}
 </style>
 </head>
 <body>
@@ -232,7 +237,7 @@ details summary{cursor:pointer;color:var(--pri);font-size:13.5px;margin:6px 0}
 <script src="data/drills.js" onerror="this.remove()"></script>
 <script>
 'use strict';
-var APP_VER = 'v2.1';
+var APP_VER = 'v2.2';
 console.log('信息安全工程师复习系统 ' + APP_VER);
 window.onerror = function(m, s, l){ var e=document.getElementById('errbox'); e.style.display='block'; e.textContent += m+' @'+l+'\n'; };
 
@@ -1252,15 +1257,25 @@ function drillMaster(id){
   var r = store.drills[id]||{n:0};
   r.ok=1; r.wrong=false; r.streak=wrongMasterN(); r.ts=Date.now(); store.drills[id]=r; save();
 }
-function drillResultHTML(it, r){
+function drillStepsHTML(list, open){
+  if(!list || !list.length) return '';
+  var body = '<div class="dsteps">'+list.map(function(s,i){
+    return '<div class="ds"><span class="n">'+(i+1)+'.</span><span>'+sanitize(String(s))+'</span></div>';
+  }).join('')+'</div>';
+  if(open===false) return '<details class="dstepssum" style="margin-top:6px"><summary><b>📝 详解（点开看分步过程）</b></summary>'+body+'</details>';
+  return '<div style="margin-top:6px"><b>📝 详解</b>'+body+'</div>';
+}
+function drillResultHTML(it, r, openSteps){
   var ansTxt = it.answerView || (Array.isArray(it.answer)? it.answer.join('；') : (it.answer && typeof it.answer==='object'? '' : it.answer));
   return '<div class="ana" style="margin-top:8px">'
     + (r.ok? '<b style="color:var(--ok)">✓ 答对</b>' : '<b style="color:var(--ng)">✗ 答错</b>')
     + ' <span class="muted">连对 '+(r.streak||0)+'/'+wrongMasterN()+(r.wrong? ' · 在错题本':'')+'</span>'
     + (ansTxt? '<div style="margin-top:6px"><b>参考答案：</b>'+sanitize(ansTxt)+'</div>' : '')
+    + drillStepsHTML(it.detail, openSteps)
     + (it.analysis? '<div style="margin-top:6px"><b>解析：</b>'+sanitize(it.analysis)+'</div>' : '')
     + '</div>';
 }
+var DRILL_STEPS_OPEN = true;
 function drillItemHTML(uid, it, idx){
   var kk=drillKk(it.id), r=drillRec(it.id), answered=(r.ok!==undefined);
   var h = '<div class="subq" id="dq_'+kk+'">'
@@ -1318,7 +1333,7 @@ function drillItemHTML(uid, it, idx){
     });
     if(!answered) h += '<div class="row" style="margin-top:6px"><button class="btn sm pri" onclick="drillOrder(\''+it.id+'\')">提交顺序</button></div>';
   }
-  if(answered) h += drillResultHTML(it, r);
+  if(answered) h += drillResultHTML(it, r, DRILL_STEPS_OPEN);
   h += '</div>';
   return h;
 }
@@ -1422,6 +1437,7 @@ function drillAI(id){
 }
 function drillBoxHTML(uid){
   var its=drillItems(uid); if(!its.length) return '';
+  DRILL_STEPS_OPEN = false;
   var st=drillStat(uid);
   var h = '<div class="card" id="drillBox"><div class="row" style="justify-content:space-between"><h3 style="margin:0">⑤ 语法·命令·计算 专项练习（'+its.length+' 题）</h3>'
     + '<span class="muted">已做 '+st.done+'/'+st.total+' · 正确 '+st.ok+'</span></div>'
@@ -1571,6 +1587,7 @@ function dGo(d){
 }
 function vDrillSession(){
   if(!dSession){ vDrill(); return; }
+  DRILL_STEPS_OPEN = true;
   var id=dSession.ids[dSession.i], o=drillById(id);
   if(!o){ dGo(1); return; }
   var N=dSession.ids.length, i=dSession.i;
