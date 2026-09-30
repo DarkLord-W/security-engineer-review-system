@@ -227,9 +227,11 @@ details summary{cursor:pointer;color:var(--pri);font-size:13.5px;margin:6px 0}
 <script src="data/handbook.js" onerror="this.remove()"></script>
 <script>window.EXPLAIN = window.EXPLAIN || {};</script>
 <script src="data/explain.js" onerror="this.remove()"></script>
+<script>window.DRILLS = window.DRILLS || {};</script>
+<script src="data/drills.js" onerror="this.remove()"></script>
 <script>
 'use strict';
-var APP_VER = 'v1.9';
+var APP_VER = 'v2.0';
 console.log('信息安全工程师复习系统 ' + APP_VER);
 window.onerror = function(m, s, l){ var e=document.getElementById('errbox'); e.style.display='block'; e.textContent += m+' @'+l+'\n'; };
 
@@ -237,7 +239,7 @@ window.onerror = function(m, s, l){ var e=document.getElementById('errbox'); e.s
 var LS_KEY='se_progress_v2', LS_IMP='se_import_v1', LS_SET='se_settings_v2', LS_SNAP='se_snapshot_v1';
 var KEYS = window.SE_KEYS || {};
 function defaultSettings(){ return {dsKey:'', glmKey:'', dsModel:'deepseek-chat', glmModel:'glm-4.7-flash', provider:'deepseek', newPerDay:20, kScope:'all', qMode:'quiz', examDate:'2026-10-24', pageWidth:1200, wrongN:20, wrongOrder:'random', wrongMaster:2, planMode:'auto', planRedo:true}; }
-function defaultStore(){ return {version:2, rec:{}, caseRec:{}, srs:{}, daily:{}, aiCache:{}, exams:[], hb:{}, hbCalc:{}, explain:{}, settings:defaultSettings()}; }
+function defaultStore(){ return {version:2, rec:{}, caseRec:{}, srs:{}, daily:{}, aiCache:{}, exams:[], hb:{}, hbCalc:{}, explain:{}, drills:{}, settings:defaultSettings()}; }
 function settingsFromFile(){
   var s = {};
   if(KEYS.dsKey) s.dsKey = KEYS.dsKey;
@@ -1025,10 +1027,12 @@ function stats(){
   for(var k in store.rec){ done++; if(store.rec[k].ok) ok++; }
   var caseWrong=0;
   for(var k in store.caseRec){ if(store.caseRec[k].m!==undefined && store.caseRec[k].m<2) caseWrong++; }
+  var dDone=0, dOk=0;
+  for(var d in (store.drills||{})){ var dr=store.drills[d]; if(dr.ok!==undefined){ dDone++; if(dr.ok) dOk++; } }
   var t = taskCounts();
   var matureN = 0, srsN = 0;
   allCardIds().forEach(function(id){ var s=srsGet(id); if(s){ srsN++; if(mature(id)) matureN++; } });
-  return {done:done, ok:ok, acc: done? Math.round(ok/done*100):0, caseWrong:caseWrong, srsN:srsN, matureN:matureN, task:t};
+  return {done:done, ok:ok, acc: done? Math.round(ok/done*100):0, caseWrong:caseWrong, drillDone:dDone, drillOk:dOk, drillAcc: dDone? Math.round(dOk/dDone*100):0, srsN:srsN, matureN:matureN, task:t};
 }
 function paperStat(p){
   var total = p.subject===1? p.qids.length : p.cids.reduce(function(n,c){ return n+DB.cases[c].qs.length; },0);
@@ -1067,6 +1071,7 @@ function wrongList(){
   for(var q in store.rec){ var r=store.rec[q]; if(r.wrong && (r.streak||0) < wrongMasterN()) out.push(q); }
   for(var c in store.caseRec){ if(store.caseRec[c].m!==undefined && store.caseRec[c].m<2) out.push(c); }
   for(var h in store.hb){ if(store.hb[h].m!==undefined && store.hb[h].m<2) out.push(h); }
+  for(var d in store.drills){ var rd=store.drills[d]; if(rd.wrong && (rd.streak||0) < wrongMasterN()) out.push(d); }
   return out;
 }
 function parseInlineOptions(stem, num){
@@ -1205,6 +1210,264 @@ function startHbWrongDrill(){
   ids = ids.slice(0, n);
   ksession = {ids: ids, isNewMap: {}, i: 0, flipped: false, answered: false, hbDrill: true};
   go('know');
+}
+/* ================= 语法·命令·计算 专项练习 (drills) ================= */
+var DRILLS = window.DRILLS || {};
+var DRILL_TYPES = {choice:'单选',multi:'多选',judge:'判断',fill:'填空',blanks:'多空填空',cmd:'命令书写',fix:'改错',pair:'配对',group:'归类',order:'排序',calc:'计算'};
+function drillNorm(s){
+  return String(s==null?'':s).trim().toLowerCase()
+    .replace(/[\u3000\s]+/g,'')
+    .replace(/[，,。．.；;：:！!？?、“”"'‘’（）()\[\]【】]/g,'')
+    .replace(/[－—–‐]/g,'-');
+}
+function drillNum(s){ var m = String(s==null?'':s).match(/-?\d+(?:\.\d+)?/); return m? parseFloat(m[0]) : NaN; }
+function drillItems(uid){ var d = DRILLS[uid]; return d? (d.items||[]) : []; }
+function drillUidOf(id){ for(var u in DRILLS){ var its=(DRILLS[u].items||[]); for(var i=0;i<its.length;i++){ if(its[i].id===id) return u; } } return null; }
+function drillById(id){ var u=drillUidOf(id); if(!u) return null; var its=DRILLS[u].items; for(var i=0;i<its.length;i++){ if(its[i].id===id) return {uid:u, item:its[i], idx:i+1}; } return null; }
+function drillRec(id){ if(!store.drills) store.drills={}; return store.drills[id]||{}; }
+function drillKk(id){ return String(id).replace(/[^A-Za-z0-9]/g,'_'); }
+function drillTypeName(t){ return DRILL_TYPES[t]||t; }
+function drillStat(uid){
+  var its=drillItems(uid), done=0, ok=0;
+  its.forEach(function(it){ var r=store.drills && store.drills[it.id]; if(r && r.ok!==undefined){ done++; if(r.ok) ok++; } });
+  return {total:its.length, done:done, ok:ok};
+}
+function drillWrongIds(){ var out=[]; for(var id in (store.drills||{})){ var r=store.drills[id]; if(r.wrong && (r.streak||0) < wrongMasterN()) out.push(id); } return out; }
+function recordDrill(id, ok){
+  if(!store.drills) store.drills={};
+  var r = store.drills[id] || {n:0};
+  r.ok = ok?1:0; r.n=(r.n||0)+1; r.ts=Date.now();
+  r.streak = ok? (r.streak||0)+1 : 0;
+  if(!ok) r.wrong = true; else if(r.wrong && r.streak >= wrongMasterN()) r.wrong = false;
+  store.drills[id]=r; save(); return r;
+}
+function drillSaveAns(id, ans){
+  if(!store.drills) store.drills={};
+  var r = store.drills[id] || {n:0};
+  r.ans = ans; store.drills[id]=r; save();
+}
+function drillMaster(id){
+  if(!store.drills) store.drills={};
+  var r = store.drills[id]||{n:0};
+  r.ok=1; r.wrong=false; r.streak=wrongMasterN(); r.ts=Date.now(); store.drills[id]=r; save();
+}
+function drillResultHTML(it, r){
+  var ansTxt = it.answerView || (Array.isArray(it.answer)? it.answer.join('；') : (it.answer && typeof it.answer==='object'? '' : it.answer));
+  return '<div class="ana" style="margin-top:8px">'
+    + (r.ok? '<b style="color:var(--ok)">✓ 答对</b>' : '<b style="color:var(--ng)">✗ 答错</b>')
+    + ' <span class="muted">连对 '+(r.streak||0)+'/'+wrongMasterN()+(r.wrong? ' · 在错题本':'')+'</span>'
+    + (ansTxt? '<div style="margin-top:6px"><b>参考答案：</b>'+sanitize(ansTxt)+'</div>' : '')
+    + (it.analysis? '<div style="margin-top:6px"><b>解析：</b>'+sanitize(it.analysis)+'</div>' : '')
+    + '</div>';
+}
+function drillItemHTML(uid, it, idx){
+  var kk=drillKk(it.id), r=drillRec(it.id), answered=(r.ok!==undefined);
+  var h = '<div class="subq" id="dq_'+kk+'">'
+    + '<div class="hd">【练习'+idx+'】<span class="tag s1">'+drillTypeName(it.type)+'</span> '
+    + (it.source? '<span class="tag gray" style="font-size:11px">'+esc(it.source)+'</span>':'')+'</div>'
+    + '<div class="qtext">'+sanitize(caseFmt(it.q))+'</div>';
+  if(it.type==='choice' || it.type==='judge'){
+    var opts = it.type==='judge'? [{key:'T',text:'✓ 正确'},{key:'F',text:'✗ 错误'}] : (it.options||[]);
+    h += opts.map(function(o){
+      var cls='opt';
+      if(answered){ cls+=' disabled'; if(o.key===it.answer) cls+=' right'; else if(r.ans===o.key) cls+=' wrong'; }
+      return '<button class="'+cls+'" '+(answered?'disabled':'')+' onclick="drillAnswer(\''+it.id+'\',\''+o.key+'\')"><b>'+o.key+'.</b> '+esc(o.text)+'</button>';
+    }).join('');
+  } else if(it.type==='multi'){
+    h += (it.options||[]).map(function(o){
+      var sel = (r.ans||[]).indexOf(o.key)>=0;
+      var cls='opt'+(answered?' disabled':'')+(sel?' on':'');
+      if(answered){ if((it.answer||[]).indexOf(o.key)>=0) cls+=' right'; else if(sel) cls+=' wrong'; }
+      return '<button class="'+cls+'" '+(answered?'disabled':'')+' onclick="drillMultiPick(\''+it.id+'\',\''+o.key+'\')"><b>'+o.key+'.</b> '+esc(o.text)+'</button>';
+    }).join('') + (answered? '' : '<div class="row" style="margin-top:6px"><button class="btn sm pri" onclick="drillMultiSubmit(\''+it.id+'\')">提交答案</button></div>');
+  } else if(it.type==='fill'){
+    h += '<div class="row"><input type="text" id="di_'+kk+'" value="'+esc(r.ans||'')+'" placeholder="输入答案…" style="flex:1;min-width:220px" '+(answered?'disabled':'')+'>'
+      + (answered? '' : '<button class="btn sm pri" onclick="drillFill(\''+it.id+'\')">提交</button>')+'</div>';
+  } else if(it.type==='blanks' || it.type==='calc'){
+    h += (it.blanks||[]).map(function(b,i2){
+      var v = (r.ans && r.ans[i2]!=null)? r.ans[i2] : '';
+      return '<div class="row" style="margin-top:4px"><span class="muted" style="min-width:130px">'+esc(b.label||('空'+(i2+1)))+'</span><input type="text" id="db_'+kk+'_'+i2+'" value="'+esc(v)+'" style="flex:1;min-width:150px" '+(answered?'disabled':'')+'></div>';
+    }).join('') + (answered? '' : '<div class="row" style="margin-top:6px"><button class="btn sm pri" onclick="drillBlanks(\''+it.id+'\')">提交</button></div>');
+  } else if(it.type==='cmd' || it.type==='fix'){
+    h += '<textarea id="dc_'+kk+'" placeholder="'+(it.type==='fix'?'写出改正后的命令/规则…':'写出命令 / 规则 / 表达式…')+'" '+(answered?'disabled':'')+'>'+esc(r.ans||'')+'</textarea>'
+      + '<div class="row" style="margin-top:6px">'
+      + '<button class="btn sm" onclick="drillReveal(\''+kk+'\')">显示参考答案</button>'
+      + '<button class="btn sm pri" onclick="drillAI(\''+it.id+'\')">🤖 AI评分</button>'
+      + (answered? '' : '<button class="btn sm" onclick="drillSelfJudge(\''+it.id+'\',true)">我答对了</button><button class="btn sm" onclick="drillSelfJudge(\''+it.id+'\',false)">我答错了</button>')
+      + '<span class="muted" id="dai_'+kk+'"></span></div>'
+      + '<div id="dao_'+kk+'"></div>'
+      + '<div class="reveal ans" id="dr_'+kk+'" style="display:none">'+sanitize(it.answerView||it.answer||'')+'</div>';
+  } else if(it.type==='pair' || it.type==='group'){
+    var opts2 = it.type==='pair'? (it.right||[]) : (it.groups||[]);
+    h += (it.left||[]).map(function(l,i2){
+      var cur = (r.ans && r.ans[i2]!=null)? String(r.ans[i2]) : '';
+      return '<div class="row" style="margin-top:4px"><span style="min-width:190px">'+esc(l.k||l.text||l)+'</span>'
+        + '<select id="d'+(it.type==='pair'?'p':'g')+'_'+kk+'_'+i2+'" style="flex:1;max-width:280px" '+(answered?'disabled':'')+'>'
+        + '<option value="">'+(it.type==='pair'?'请选择…':'请归类…')+'</option>'
+        + opts2.map(function(x,j){ var val = it.type==='pair'? String(j) : x; return '<option value="'+esc(val)+'"'+(cur===String(val)?' selected':'')+'>'+esc(x)+'</option>'; }).join('')
+        + '</select></div>';
+    }).join('') + (answered? '' : '<div class="row" style="margin-top:6px"><button class="btn sm pri" onclick="drillMap(\''+it.id+'\')">提交</button></div>');
+  } else if(it.type==='order'){
+    var seq = (r.ans && r.ans.length)? r.ans.slice() : (it.shuffled||it.steps||[]).slice();
+    h += '<div class="muted" style="font-size:12px">用 ↑↓ 调整为正确顺序：</div>';
+    seq.forEach(function(x,i2){
+      h += '<div class="row" style="margin-top:4px"><span class="muted" style="width:26px">'+(i2+1)+'.</span><span style="flex:1">'+esc(x)+'</span>'
+        + (answered? '' : '<button class="btn sm" onclick="drillMove(\''+it.id+'\','+i2+',-1)">↑</button> <button class="btn sm" onclick="drillMove(\''+it.id+'\','+i2+',1)">↓</button>')
+        + '</div>';
+    });
+    if(!answered) h += '<div class="row" style="margin-top:6px"><button class="btn sm pri" onclick="drillOrder(\''+it.id+'\')">提交顺序</button></div>';
+  }
+  if(answered) h += drillResultHTML(it, r);
+  h += '</div>';
+  return h;
+}
+function drillRefresh(id){
+  var o = drillById(id); if(!o) return;
+  var el = document.getElementById('dq_'+drillKk(id));
+  if(el) el.outerHTML = drillItemHTML(o.uid, o.item, o.idx);
+}
+function drillAnswer(id, key){
+  var o=drillById(id); if(!o) return;
+  var ok = (o.item.answer===key);
+  drillSaveAns(id, key); recordDrill(id, ok);
+  toast(ok? '✓ 答对' : '✗ 答错，已进错题本'); drillRefresh(id);
+}
+function drillMultiPick(id, key){
+  var r=drillRec(id); var a=(r.ans||[]).slice(); var i=a.indexOf(key);
+  if(i>=0) a.splice(i,1); else a.push(key);
+  drillSaveAns(id, a); drillRefresh(id);
+}
+function drillMultiSubmit(id){
+  var o=drillById(id); if(!o) return;
+  var a=(drillRec(id).ans||[]).slice().sort().join(',');
+  var c=(o.item.answer||[]).slice().sort().join(',');
+  var ok = a!=='' && a===c;
+  recordDrill(id, ok); toast(ok? '✓ 答对' : '✗ 答错，已进错题本'); drillRefresh(id);
+}
+function drillIsNum(s){ return /^-?\d+(\.\d+)?$/.test(drillNorm(s)); }
+function drillNumEq(a, b){ var x=drillNum(a), y=drillNum(b); return !isNaN(x) && !isNaN(y) && Math.abs(x-y)<1e-6; }
+function drillTextOk(it, val){
+  var v=drillNorm(val); if(!v) return false;
+  var list=[it.answer].concat(it.alts||[]);
+  if(list.some(function(a){ return drillNorm(a)===v; })) return true;
+  if(drillIsNum(val)) return list.some(function(a){ return drillIsNum(a) && drillNumEq(a, val); });
+  return false;
+}
+function drillFill(id){
+  var o=drillById(id); if(!o) return;
+  var el=document.getElementById('di_'+drillKk(id)); var v=el? el.value : '';
+  var ok=drillTextOk(o.item, v);
+  drillSaveAns(id, v); recordDrill(id, ok);
+  toast(ok? '✓ 答对' : '✗ 答错，已进错题本'); drillRefresh(id);
+}
+function drillBlankOk(b, val){
+  var v=drillNorm(val); if(!v) return false;
+  var alts=[b.answer].concat(b.alts||[]);
+  if(alts.some(function(a){ return drillNorm(a)===v; })) return true;
+  if(drillIsNum(val)) return alts.some(function(a){ return drillIsNum(a) && drillNumEq(a, val); });
+  return false;
+}
+function drillBlanks(id){
+  var o=drillById(id); if(!o) return;
+  var vals=(o.item.blanks||[]).map(function(b,i){ var el=document.getElementById('db_'+drillKk(id)+'_'+i); return el? el.value : ''; });
+  var ok=(o.item.blanks||[]).every(function(b,i){ return drillBlankOk(b, vals[i]); });
+  drillSaveAns(id, vals); recordDrill(id, ok);
+  toast(ok? '✓ 全对' : '✗ 有误，已进错题本'); drillRefresh(id);
+}
+function drillMap(id){
+  var o=drillById(id); if(!o) return; var it=o.item;
+  var pre = (it.type==='pair'?'dp_':'dg_');
+  var vals=(it.left||[]).map(function(l,i){ var el=document.getElementById(pre+drillKk(id)+'_'+i); return el? el.value : ''; });
+  var ans=(it.answer||[]).map(function(x){ return String(x); });
+  var ok = vals.length===ans.length && vals.every(function(v,i){ return String(v)===ans[i]; });
+  drillSaveAns(id, vals); recordDrill(id, ok);
+  toast(ok? '✓ 全对' : '✗ 有误，已进错题本'); drillRefresh(id);
+}
+function drillMove(id, i, d){
+  var o=drillById(id); if(!o) return;
+  var r=drillRec(id);
+  var seq=(r.ans && r.ans.length)? r.ans.slice() : (o.item.shuffled||o.item.steps||[]).slice();
+  var j=i+d; if(j<0 || j>=seq.length) return;
+  var t=seq[i]; seq[i]=seq[j]; seq[j]=t;
+  drillSaveAns(id, seq); drillRefresh(id);
+}
+function drillOrder(id){
+  var o=drillById(id); if(!o) return;
+  var r=drillRec(id);
+  var seq=(r.ans && r.ans.length)? r.ans : (o.item.shuffled||o.item.steps||[]);
+  var ok = JSON.stringify(seq)===JSON.stringify(o.item.steps||[]);
+  drillSaveAns(id, seq); recordDrill(id, ok);
+  toast(ok? '✓ 顺序正确' : '✗ 顺序有误，已进错题本'); drillRefresh(id);
+}
+function drillReveal(kk){ var el=document.getElementById('dr_'+kk); if(el) el.style.display = el.style.display==='none'? 'block':'none'; }
+function drillSelfJudge(id, ok){ recordDrill(id, ok); toast(ok? '已记为答对' : '已记为答错，进错题本'); drillRefresh(id); }
+function drillAI(id){
+  var o=drillById(id); if(!o) return;
+  var kk=drillKk(id), el=document.getElementById('dai_'+kk), out=document.getElementById('dao_'+kk);
+  var ta=document.getElementById('dc_'+kk);
+  var userAns = ta? ta.value : ((drillRec(id).ans)||'');
+  if(!llmProviders().length){ if(el) el.innerHTML='<span class="tag warn">未配置API Key</span>'; return; }
+  if(el) el.innerHTML='<span class="spin"></span> AI评分中…';
+  aiScore(id, o.item.q, 5, o.item.answerView||o.item.answer, userAns)
+    .then(function(res){
+      if(el) el.innerHTML = res.cached? '<span class="tag gray">缓存结果</span>' : '<span class="tag ok">评分完成</span>';
+      var sc=(res.result&&res.result.score)||0, mx=(res.result&&res.result.max)||5;
+      var ok = mx? (sc/mx)>=0.6 : false;
+      drillSaveAns(id, userAns); recordDrill(id, ok);
+      var r = drillRec(id);
+      if(out) out.innerHTML = renderAI(res.result) + drillResultHTML(o.item, r);
+    })
+    .catch(function(e){ if(el) el.innerHTML='<span class="tag ng">'+esc((e&&e.message)||'失败')+'</span>'; });
+}
+function drillBoxHTML(uid){
+  var its=drillItems(uid); if(!its.length) return '';
+  var st=drillStat(uid);
+  var h = '<div class="card" id="drillBox"><div class="row" style="justify-content:space-between"><h3 style="margin:0">⑤ 语法·命令·计算 专项练习（'+its.length+' 题）</h3>'
+    + '<span class="muted">已做 '+st.done+'/'+st.total+' · 正确 '+st.ok+'</span></div>'
+    + '<p class="muted" style="margin-top:6px">'+(DRILLS[uid].topic? '覆盖：'+esc(DRILLS[uid].topic)+' · ':'')+'每题标注来源；答错自动进错题本，连对 '+wrongMasterN()+' 次（或点“已掌握”）移出。</p>';
+  its.forEach(function(it,i){ h += drillItemHTML(uid, it, i+1); });
+  h += '</div>';
+  return h;
+}
+function openDrill(id){
+  var o=drillById(id); if(!o){ toast('练习不存在'); return; }
+  go('know'); vUnit(o.uid);
+  setTimeout(function(){ var el=document.getElementById('dq_'+drillKk(id)); if(el) el.scrollIntoView({behavior:'smooth', block:'center'}); }, 90);
+}
+/* ---- 刷练习错题 ---- */
+var dSession = null;
+function startDrillWrongDrill(){
+  var s=store.settings;
+  var ids=drillWrongIds();
+  if(!ids.length){ toast('没有可刷的练习错题'); return; }
+  if((s.wrongOrder||'random')==='random') ids.sort(function(){ return Math.random()-.5; });
+  var n=(+s.wrongN===999)? ids.length : Math.min(+s.wrongN||20, ids.length);
+  dSession={ids: ids.slice(0,n), i:0};
+  go('wrong');
+}
+function dExit(){ dSession=null; vWrong(); }
+function dGo(d){
+  if(!dSession){ vWrong(); return; }
+  dSession.i += d;
+  if(dSession.i < 0) dSession.i = 0;
+  if(dSession.i >= dSession.ids.length){
+    var total=dSession.ids.length; dSession=null;
+    view.innerHTML = '<div class="card" style="text-align:center;padding:36px"><h2>🎉 本轮练习错题已刷完</h2><p class="muted">共 '+total+' 题</p><div class="row" style="justify-content:center;margin-top:12px"><button class="btn pri" onclick="vWrong()">返回错题本</button></div></div>';
+    return;
+  }
+  vDrillWrong();
+}
+function vDrillWrong(){
+  if(!dSession){ vWrong(); return; }
+  var id=dSession.ids[dSession.i], o=drillById(id);
+  if(!o){ dGo(1); return; }
+  var N=dSession.ids.length, i=dSession.i;
+  var h = '<div class="card"><div class="row" style="justify-content:space-between"><b>🎯 练习错题重做 · 第 '+(i+1)+' / '+N+' 题</b><button class="btn sm" onclick="dExit()">退出</button></div>'
+    + '<div class="bar" style="margin:8px 0"><i style="width:'+Math.round(i/N*100)+'%"></i></div>'
+    + '<p class="muted">覆盖单元：'+esc(o.uid)+' · 答对连对达标即移出错题本。</p></div>';
+  h += '<div class="card">'+drillItemHTML(o.uid, o.item, i+1)+'</div>';
+  h += '<div class="card"><div class="nav"><button class="btn" onclick="dExit()">退出</button><span><button class="btn" onclick="dGo(-1)" '+(i===0?'disabled':'')+'>上一题</button> <button class="btn" onclick="dGo(1)">跳过 / 下一题</button></span></div></div>';
+  view.innerHTML = h;
 }
 function hbMaster(id){
   var r = store.hb[id] || {n:0};
@@ -2439,6 +2702,8 @@ function vUnit(uid){
   h += '<div class="card" id="unitQBox">'+unitQuizHTML(uid)+'</div>';
   // ④ 敲记
   h += '<div class="card"><h3>④ 敲记练习</h3>'+renderTypePanel(uid, ai)+'</div>';
+  // ⑤ 语法·命令·计算 专项练习
+  h += drillBoxHTML(uid);
   view.innerHTML = h;
 }
 
@@ -2954,17 +3219,20 @@ function startKnowN(){
 
 /* ================= 错题本 ================= */
 function vWrong(){
+  if(dSession){ vDrillWrong(); return; }
   if(cwSession){ vCaseWrong(); return; }
   var list = wrongList();
   var qc = list.filter(function(q){ return DB.questions[q]; }).length;
   var cc = list.filter(function(k){ return k.indexOf('#')>0 && DB.cases[k.split('#')[0]]; }).length;
   var hc = list.filter(function(k){ return !!hbItem(k); }).length;
+  var dc = list.filter(function(k){ return !!drillById(k); }).length;
   var h = '<div class="card"><h2>错题本 ('+list.length+')</h2>'
     + '<div class="row" style="margin-top:6px">'+wrongCfgRow('w')+'</div>'
     + '<div class="row" style="margin-top:8px">'
     + '<button class="btn pri" onclick="startWrongDrill()" '+(qc?'':'disabled')+'>🎯 刷选择题错题 ('+wrongDrillN(qc)+'/'+qc+')</button>'
     + '<button class="btn pri" onclick="startCaseWrongDrill()" '+(cc?'':'disabled')+'>🎯 刷案例错题 ('+wrongDrillN(cc)+'/'+cc+')</button>'
     + '<button class="btn pri" onclick="startHbWrongDrill()" '+(hc?'':'disabled')+'>🃏 刷手册错题 ('+wrongDrillN(hc)+'/'+hc+')</button>'
+    + '<button class="btn pri" onclick="startDrillWrongDrill()" '+(dc?'':'disabled')+'>🎯 刷练习错题 ('+wrongDrillN(dc)+'/'+dc+')</button>'
     + '</div>'
     + '<p class="muted">只有<b>做错过</b>的题才会进入错题本；在任意模块连对 '+wrongMasterN()+' 次（或点“已掌握”）即可移出。重做不会重置连对。</p>';
   if(!list.length) h+='<p class="muted">空的，继续保持！✨</p>';
@@ -2986,6 +3254,12 @@ function vWrong(){
       var plain = String(hb.a||hb.html||'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').slice(0,50);
       h += '<div class="wrongs-item"><span><span class="tag s3">冲刺手册</span>'+sanitize(hb.q||hb.title||'')+'<br><span class="muted">'+esc(plain)+'…</span></span>'
         +'<span><button class="btn sm" onclick="hbMaster(\''+q+'\');vWrong()">已掌握</button> <button class="btn sm" onclick="go(\'sprint\')">去冲刺页</button></span></div>';
+    } else if(drillById(q)){
+      var dr = drillById(q), dit = dr.item, drr = store.drills[q]||{};
+      h += '<div class="wrongs-item"><span><span class="tag s3">练习·'+drillTypeName(dit.type)+'</span> '
+        + (dit.source? '<span class="tag gray" style="font-size:11px">'+esc(dit.source)+'</span> ':'')
+        + esc(String(dit.q).replace(/<[^>]*>/g,'').slice(0,46))+'…<br><span class="muted">单元：'+esc(dr.uid)+' · 连对 '+((drr.streak)||0)+'/'+wrongMasterN()+'</span></span>'
+        +'<span><button class="btn sm" onclick="openDrill(\''+q+'\')">重做</button> <button class="btn sm" onclick="drillMaster(\''+q+'\');vWrong()">已掌握</button></span></div>';
     }
   });
   h += '</div>';
@@ -3016,6 +3290,7 @@ function vStats(){
     +'<div class="stat g"><b>'+st.srsN+'</b><span>知识卡已学</span></div>'
     +'<div class="stat g"><b>'+st.matureN+'</b><span>已熟练(21天+)</span></div>'
     +'<div class="stat o"><b>'+st.caseWrong+'</b><span>案例待巩固</span></div>'
+    +'<div class="stat g"><b>'+st.drillAcc+'%</b><span>练习正确率 ('+st.drillDone+'题)</span></div>'
     +'<div class="stat"><b>'+streak()+'</b><span>连续打卡</span></div></div></div>';
   if(store.exams.length){
     h += '<div class="card"><h2>模拟考成绩</h2><table class="tb"><tr><th>日期</th><th>试卷</th><th>得分</th></tr>';
