@@ -1,4 +1,4 @@
-# 密钥 / 本地配置
+﻿# 密钥 / 本地配置
 scripts/.llmkey
 data/keys.js
 
@@ -14,6 +14,7 @@ data/*.bak2
 data/*.bak3
 data/*.bak*
 复习进度备份.json
+复习进度备份_*.json
 
 # 源资料（大体积，归档目录）
 资料/
