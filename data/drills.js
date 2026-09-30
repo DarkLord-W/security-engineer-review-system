@@ -350,7 +350,7 @@ window.DRILLS = {
     ]
   },
   "U12.1": {
-    topic: "安全管理与安全开发生命周期",
+    topic: "网络安全审计·安全管理与应急响应",
     items: [
       { id:"DL-sdlc-01", type:"choice", q:"在 SDLC（系统开发生命周期）中引入安全活动的主要目的？", options:[{key:"A",text:"在需求、设计、编码、测试、运维各阶段尽早发现并消除安全缺陷"},{key:"B",text:"缩短开发周期"},{key:"C",text:"降低硬件成本"},{key:"D",text:"减少测试用例" }], answer:"A", answerView:"把安全左移，各阶段消除安全缺陷", analysis:"安全左移可显著降低修复成本。", source:"来源：教材12.1 安全管理（安全工程）" },
       { id:"DL-sdlc-02", type:"order", q:"按应急响应（PDCERF）流程排列（↑↓ 调整）：", steps:["准备 Preparation","检测 Detection","抑制 Containment","根除 Eradication","恢复 Recovery","跟踪总结 Follow-up"], shuffled:["检测 Detection","准备 Preparation","根除 Eradication","抑制 Containment","跟踪总结 Follow-up","恢复 Recovery"], answerView:"准备→检测→抑制→根除→恢复→跟踪", analysis:"六阶段记忆：P-D-C-E-R-F。", source:"来源：教材17.5 应急响应与取证" },
