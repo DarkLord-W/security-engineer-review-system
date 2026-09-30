@@ -242,7 +242,7 @@ details.dstepssum>summary{cursor:pointer;color:var(--pri,#3b82f6)}
 <script src="data/drills.js" onerror="this.remove()"></script>
 <script>
 'use strict';
-var APP_VER = 'v2.7';
+var APP_VER = 'v2.8';
 console.log('信息安全工程师复习系统 ' + APP_VER);
 window.onerror = function(m, s, l){ var e=document.getElementById('errbox'); e.style.display='block'; e.textContent += m+' @'+l+'\n'; };
 
@@ -1652,6 +1652,396 @@ function hbMaster(id){
   toast('已标记掌握');
 }
 
+/* ================= v2.8-A 上午场整卷限时模考 ================= */
+var AM_EXAM_SEC = 150*60;
+var amExam = null, amShowCard = false;
+function fmtMMSS(s){ s=Math.max(0, Math.floor(+s||0)); var m=Math.floor(s/60), ss=s%60; return (m<10?'0':'')+m+':'+(ss<10?'0':'')+ss; }
+function amPapers(){ return DB.papers.filter(function(p){ return p.subject===1 && p.qids && p.qids.length; }); }
+function amPaperTitle(pid){ var p=DB.papers.find(function(x){ return x.id===pid; }); return p? p.title : pid; }
+function amStopTimer(){ if(amExam && amExam._t){ clearInterval(amExam._t); amExam._t=null; } }
+function amSave(){ if(amExam){ amExam._t=null; store.amExam=amExam; save(); } }
+function amPause(){ if(amExam && !amExam.done){ amStopTimer(); amSave(); } }
+function amAnsCount(st){ st=st||amExam; if(!st||!st.ids) return 0; var n=0; st.ids.forEach(function(q){ if(st.ans[q]) n++; }); return n; }
+function amStartTimer(){
+  amStopTimer();
+  if(!amExam || amExam.done) return;
+  amExam._t = setInterval(function(){
+    if(!amExam || amExam.done){ amStopTimer(); return; }
+    if(amExam.left>0) amExam.left--;
+    var el=document.getElementById('amClock'); if(el) el.textContent=fmtMMSS(amExam.left);
+    var bar=document.getElementById('amClockBar'); if(bar) bar.style.width=Math.round(amExam.left/AM_EXAM_SEC*100)+'%';
+    if(amExam.left<=0){ amStopTimer(); toast('⏰ 时间到，自动交卷'); amSubmit(true); return; }
+    if(amExam.left%15===0) amSave();
+  }, 1000);
+}
+function startExamAM(pid){
+  var p = amPapers().find(function(x){ return x.id===pid; });
+  if(!p){ toast('试卷不存在'); return; }
+  var st = (store.amExam && !store.amExam.done && store.amExam.paperId===pid && store.amExam.ids && store.amExam.ids.length)? store.amExam : null;
+  if(st && !confirm('发现《'+p.title+'》的未完成模考：\n剩余 '+fmtMMSS(st.left)+' · 已答 '+amAnsCount(st)+'/'+st.ids.length+' 题\n\n【确定】继续作答　【取消】重新开始')){
+    st=null; store.amExam=null;
+  }
+  if(!st){
+    st = {paperId:pid, ids:p.qids.slice(), ans:{}, mark:{}, i:0, left:AM_EXAM_SEC, done:false, startedAt:Date.now()};
+  }
+  amExam = st; store.amExam = st; save();
+  amShowCard = false;
+  go('am', {exam:1});
+}
+function resumeExamAM(){ var st=store.amExam; if(!st||st.done){ toast('没有未完成的模考'); return; } amExam=st; amShowCard=false; go('am', {exam:1}); }
+function discardExamAM(){ if(!confirm('放弃该未完成模考？已作答记录将丢失（已判分的错题记录不受影响）。')) return; amStopTimer(); amExam=null; store.amExam=null; save(); toast('已放弃'); vAM(); }
+function amPick(key){
+  if(!amExam) return;
+  var qid = amExam.ids[amExam.i];
+  amExam.ans[qid] = key;
+  if(amExam.i < amExam.ids.length-1) amExam.i++;
+  amSave(); vAM({exam:1});
+}
+function amGoto(i){ if(!amExam) return; amExam.i=Math.max(0, Math.min(amExam.ids.length-1, i)); amShowCard=false; amSave(); vAM({exam:1}); }
+function amToggleMark(){ if(!amExam) return; var qid=amExam.ids[amExam.i]; if(amExam.mark[qid]) delete amExam.mark[qid]; else amExam.mark[qid]=1; amSave(); vAM({exam:1}); }
+function amToggleCard(){ amShowCard=!amShowCard; vAM({exam:1}); }
+function amExitAsk(){ amPause(); toast('已保存进度，可稍后继续'); go('am'); }
+function amCardHTML(){
+  if(!amShowCard || !amExam) return '';
+  var h = '<div class="bar" style="margin-top:8px;height:auto;background:transparent"><div style="display:flex;flex-wrap:wrap;gap:4px">';
+  amExam.ids.forEach(function(qid, i){
+    var a = amExam.ans[qid], mk = amExam.mark[qid];
+    var bg = mk? '#f59e0b' : (a? 'var(--pri)' : 'transparent');
+    var col = (mk||a)? '#fff' : 'var(--tx)';
+    h += '<button class="btn sm" style="min-width:34px;padding:2px 4px;background:'+bg+';color:'+col+';border:1px solid var(--line)" onclick="amGoto('+i+')">'+(i+1)+'</button>';
+  });
+  h += '</div></div><div class="muted" style="margin-top:4px">🔵已答 · 🟠标记 · 灰=未答</div>';
+  return h;
+}
+function amExamHTML(){
+  var st=amExam, q=DB.questions[st.ids[st.i]];
+  if(!q){ amGoto(st.i+1); return ''; }
+  var g = q.group? DB.groups[q.group] : null;
+  var opts = (q.options && q.options.length)? q.options : parseInlineOptions(q.stem, q.num);
+  var stemShow = q.stem;
+  if(!(q.options && q.options.length) && opts) stemShow = String(q.stem||'').replace(new RegExp('[（(]\\s*'+q.num+'\\s*[）)]\\s*A[.、．][\\s\\S]*$'), '');
+  var h = '<div class="card" style="padding:10px 14px">'
+    + '<div class="row" style="justify-content:space-between;align-items:center">'
+    + '<b>🎬 模拟考 · '+esc(amPaperTitle(st.paperId))+'</b>'
+    + '<span class="muted">第 '+(st.i+1)+' / '+st.ids.length+' 题 · 已答 '+amAnsCount(st)+'</span></div>'
+    + '<div class="row" style="margin:8px 0;justify-content:space-between;align-items:center"><span>⏱ <b id="amClock" style="font-variant-numeric:tabular-nums;font-size:18px;color:var(--pri)">'+fmtMMSS(st.left)+'</b></span>'
+    + '<span><button class="btn sm" onclick="amToggleCard()">'+(amShowCard?'收起题卡':'📋 题卡')+'</button> '
+    + '<button class="btn sm" onclick="amToggleMark()">'+(st.mark[st.ids[st.i]]? '✅ 已标记':'🔖 标记本题')+'</button> '
+    + '<button class="btn sm pri" onclick="amSubmit()">📮 交卷</button></span></div>'
+    + '<div class="bar"><i id="amClockBar" style="width:'+Math.round(st.left/AM_EXAM_SEC*100)+'%"></i></div>'
+    + amCardHTML() + '</div>';
+  h += '<div class="card">'
+    + (g? '<div class="ana">'+richBlock(g.stem)+'</div>' : '')
+    + '<div class="qtext">'+richQ(stemShow)+'</div>';
+  if(opts && opts.length){
+    h += opts.map(function(o){
+      var sel = st.ans[q.id]===o.key;
+      return '<button class="opt'+(sel?' on':'')+'" onclick="amPick(\''+o.key+'\')"><b>'+o.key+'.</b> '+esc(o.text)+'</button>';
+    }).join('');
+  } else h += '<p><span class="tag warn">本题选项缺失（源文件缺）</span></p>';
+  h += '<div class="nav"><button class="btn" onclick="amGoto('+(st.i-1)+')" '+(st.i===0?'disabled':'')+'>← 上一题</button>'
+    + '<button class="btn" onclick="amGoto('+(st.i+1)+')" '+(st.i>=st.ids.length-1?'disabled':'')+'>下一题 →</button>'
+    + '<button class="btn sm" onclick="amExitAsk()">退出（保留进度）</button></div>'
+    + '<p class="muted" style="margin-top:6px">模拟考期间不显示对错；交卷后统一判分并给出失分分析。未答题计为错误但不进错题本（可在成绩页一键加入）。</p></div>';
+  return h;
+}
+function amSubmit(auto){
+  if(!amExam) return;
+  var total=amExam.ids.length, un=[], wrongIds=[], ok=0;
+  if(!auto && !confirm('确定交卷？\n未答 '+(total-amAnsCount(amExam))+' 题将计为错误（不进错题本）。')) return;
+  amStopTimer();
+  amExam.ids.forEach(function(qid){
+    var q=DB.questions[qid]; if(!q) return;
+    var a=amExam.ans[qid]||'';
+    if(!a){ un.push(qid); return; }
+    var correct = (a===q.answer);
+    if(correct) ok++; else wrongIds.push(qid);
+    var r = store.rec[qid] || {};
+    r.a=a; r.ok=correct?1:0; r.ts=Date.now(); r.n=(r.n||0)+1;
+    r.streak = correct? (r.streak||0)+1 : 0;
+    if(!correct) r.wrong = true; else if(r.wrong && r.streak >= wrongMasterN()) r.wrong = false;
+    store.rec[qid]=r;
+  });
+  var report = {paperId:amExam.paperId, date:today(), ok:ok, total:total, un:un, wrong:wrongIds,
+                used: AM_EXAM_SEC - amExam.left, ts:Date.now()};
+  store.exams.push({paperId:report.paperId, date:report.date, total:ok, max:total, ts:report.ts});
+  store.amLastReport = report;
+  amExam=null; store.amExam=null; save();
+  go('am', {report:1});
+  toast('已交卷：'+ok+' / '+total);
+}
+function amLossHTML(ids){
+  var ch={}, ty={};
+  ids.forEach(function(qid){
+    var uid = CARDS.meta.qunit[qid] || ((CARDS.meta.qunitX[qid]||[])[0]);
+    var u = uid? unitById(uid) : null;
+    var key = u? ((u.subject===1?'科一':'科二')+'第'+u.scopeCh+'章 '+chNameBy(u.subject,u.scopeCh)) : '未归类';
+    ch[key]=(ch[key]||0)+1;
+    (CARDS.meta.qtype[qid]||['未分型']).forEach(function(t){ ty[t]=(ty[t]||0)+1; });
+  });
+  function tbl(o, name){
+    var ks=Object.keys(o).sort(function(a,b){ return o[b]-o[a]; });
+    if(!ks.length) return '<p class="muted">无</p>';
+    return '<table class="tb"><tr><th>'+name+'</th><th>失分</th></tr>'+ks.map(function(k){ return '<tr><td>'+esc(k)+'</td><td>'+o[k]+'</td></tr>'; }).join('')+'</table>';
+  }
+  return tbl(ch,'章节')+tbl(ty,'题型');
+}
+function amAddUnanswered(){
+  var r = store.amLastReport;
+  if(!r || !r.un || !r.un.length){ toast('没有未答题'); return; }
+  r.un.forEach(function(qid){
+    var q=DB.questions[qid]; if(!q) return;
+    var rec = store.rec[qid] || {};
+    rec.a=''; rec.ok=0; rec.wrong=true; rec.ts=Date.now(); rec.n=(rec.n||0)+1; rec.streak=0;
+    store.rec[qid]=rec;
+  });
+  save(); toast('已把 '+r.un.length+' 道未答题加入错题本');
+  go('am', {report:1});
+}
+function vAmReport(){
+  var r = store.amLastReport;
+  if(!r){ vAM(); return; }
+  var pct = r.total? Math.round(r.ok/r.total*100) : 0;
+  var h = '<div class="card"><h2 style="margin:0">📊 模考成绩 · '+esc(amPaperTitle(r.paperId))+'</h2>'
+    + '<p class="muted" style="margin-top:6px">'+r.date+' · 用时 '+fmtMMSS(r.used)+' / 150:00</p>'
+    + '<div class="row"><div class="stat"><b>'+r.ok+'/'+r.total+'</b><span>得分</span></div>'
+    + '<div class="stat g"><b>'+pct+'%</b><span>正确率</span></div>'
+    + '<div class="stat o"><b>'+r.wrong.length+'</b><span>答错（已进错题本）</span></div>'
+    + '<div class="stat"><b>'+r.un.length+'</b><span>未答</span></div></div>'
+    + '<div class="row" style="margin-top:10px"><button class="btn pri" onclick="startWrongDrill()">🎯 刷本次错题</button>'
+    + '<button class="btn" onclick="vWrong()">去错题本</button>'
+    + '<button class="btn" onclick="go(\'am\')">返回上午场</button>'
+    + '<button class="btn sm" onclick="store.amLastReport=null;save();go(\'am\')">清空本次成绩</button></div></div>';
+  h += '<div class="card"><h3 style="margin-top:0">失分分析</h3>'+amLossHTML(r.wrong.concat(r.un))+'</div>';
+  if(r.un.length){
+    h += '<div class="card"><h3 style="margin-top:0">未答清单（'+r.un.length+' 题）</h3>'
+      + '<p class="muted">未答题计为错误，按默认设置不进错题本。如需强化，可一键加入。</p>'
+      + '<div class="row"><button class="btn pri" onclick="amAddUnanswered()">➕ 把这 '+r.un.length+' 题加入错题本</button></div>'
+      + '<div style="margin-top:8px">'+r.un.map(function(qid){ var q=DB.questions[qid];
+          return '<div class="wrongs-item"><span>'+q.year+halfName(q.half)+' 第'+q.num+'题 '+esc(plainText(qPreviewText(q)).slice(0,42))+'…</span>'
+            + '<button class="btn sm" onclick="redoOne(\''+qid+'\')">做一遍</button></div>'; }).join('')+'</div></div>';
+  }
+  if(r.wrong.length){
+    h += '<div class="card"><h3 style="margin-top:0">答错清单（'+r.wrong.length+' 题，已进错题本）</h3>'
+      + r.wrong.map(function(qid){ var q=DB.questions[qid];
+          return '<div class="wrongs-item"><span>'+q.year+halfName(q.half)+' 第'+q.num+'题 '+esc(plainText(qPreviewText(q)).slice(0,42))+'…</span>'
+            + '<button class="btn sm" onclick="openPaper(\''+(amPaperOf(qid)||'')+'\')">看整卷</button></div>'; }).join('')
+      + '</div>';
+  }
+  view.innerHTML = h;
+  currentView = 'am';
+}
+function amPaperOf(qid){ var p = DB.papers.find(function(x){ return x.subject===1 && x.qids.indexOf(qid)>=0; }); return p? p.id : null; }
+function vAmExamList(){
+  var papers = amPapers();
+  var st = store.amExam && !store.amExam.done? store.amExam : null;
+  var h = '<div class="card"><h2>🎬 上午场整卷限时模考</h2>'
+    + '<p class="muted">75 题 / 150 分钟；交卷自动判分并给出按章节、按题型的失分分析；答错自动进错题本。答题期间不显示对错。</p>';
+  if(st){
+    h += '<div class="row" style="margin-top:8px"><span class="tag warn">有未完成模考</span>'
+      + '<button class="btn pri" onclick="resumeExamAM()">▶ 继续（剩余 '+fmtMMSS(st.left)+' · 已答 '+amAnsCount(st)+'/'+st.ids.length+'）</button>'
+      + '<button class="btn sm" onclick="discardExamAM()">放弃</button></div>';
+  }
+  h += '<table class="tb" style="margin-top:10px"><tr><th>试卷</th><th>题数</th><th>已做</th><th></th></tr>';
+  papers.forEach(function(p){
+    var s = paperStat(p);
+    h += '<tr><td>'+esc(p.title)+'</td><td>'+p.qids.length+'</td><td>'+s.done+'/'+s.total+'</td>'
+      + '<td><button class="btn sm pri" onclick="startExamAM(\''+p.id+'\')">🎬 开始模考</button></td></tr>';
+  });
+  h += '</table></div>';
+  return h;
+}
+/* ================= v2.8-B 薄弱章节榜 ================= */
+function chapterStats(){
+  var ch = {};
+  function slot(s, c){ var k=s+'-'+c; return ch[k] = ch[k] || {s:s, c:c, qn:0, qok:0, dn:0, dok:0}; }
+  DB.papers.forEach(function(p){
+    if(p.subject!==1) return;
+    p.qids.forEach(function(qid){
+      var r = store.rec[qid]; if(!r || r.ok===undefined) return;
+      var uid = CARDS.meta.qunit[qid] || ((CARDS.meta.qunitX[qid]||[])[0]);
+      var u = uid? unitById(uid) : null; if(!u || !u.scopeCh) return;
+      var m = slot(u.subject, u.scopeCh); m.qn++; if(r.ok) m.qok++;
+    });
+  });
+  Object.keys(DRILLS).forEach(function(uid){
+    var u = unitById(uid); if(!u || !u.scopeCh) return;
+    var m = slot(u.subject, u.scopeCh);
+    (DRILLS[uid].items||[]).forEach(function(it){
+      var r = store.drills && store.drills[it.id]; if(!r || r.ok===undefined) return;
+      m.dn++; if(r.ok) m.dok++;
+    });
+  });
+  var out = [];
+  Object.keys(ch).forEach(function(k){
+    var m = ch[k], n = m.qn+m.dn; if(!n) return;
+    m.n = n; m.ok = m.qok+m.dok; m.acc = Math.round(m.ok/n*100);
+    out.push(m);
+  });
+  out.sort(function(a,b){ return (a.n>=5? 0:1)-(b.n>=5? 0:1) || a.acc-b.acc || b.n-a.n; });
+  return out;
+}
+function startDrillChapter(s, c){
+  var ids = [];
+  DB.papers.forEach(function(p){ if(p.subject!==1) return;
+    p.qids.forEach(function(qid){
+      var uid = CARDS.meta.qunit[qid] || ((CARDS.meta.qunitX[qid]||[])[0]);
+      var u = uid? unitById(uid):null;
+      if(u && u.subject===s && String(u.scopeCh)===String(c)) ids.push(qid);
+    });
+  });
+  if(!ids.length){ toast('该章暂无选择题'); return; }
+  ids.sort(function(a,b){
+    var qa=DB.questions[a], qb=DB.questions[b];
+    return (qa.year-qb.year) || (qa.half-qb.half) || (qa.num-qb.num);
+  });
+  session = {ids:ids, i:0, answered:false};
+  go('am', {session:1});
+}
+function chapterWeakHTML(){
+  var list = chapterStats();
+  var h = '<div class="card"><h2>薄弱章节榜</h2>'
+    + '<p class="muted">按“选择题 + 专项练习”综合正确率排序（样本 < 5 的排在最后并标灰）。点按钮直接开练。</p>';
+  if(!list.length){ return h + '<p class="muted">还没有做题记录，先去上午场或专项练习做几题吧。</p></div>'; }
+  h += '<table class="tb"><tr><th>章节</th><th>综合</th><th>选择题</th><th>专项练习</th><th></th></tr>';
+  list.slice(0,12).forEach(function(m){
+    var weak = m.n < 5;
+    var col = m.acc>=80? 'var(--ok)' : (m.acc>=60? '#f59e0b' : 'var(--ng)');
+    h += '<tr'+(weak?' style="opacity:.55"':'')+'><td>'+esc((m.s===1?'科一':'科二')+'第'+m.c+'章 '+chNameBy(m.s,m.c))+'</td>'
+      + '<td><b style="color:'+col+'">'+m.acc+'%</b><br><span class="muted">'+m.n+' 次</span></td>'
+      + '<td>'+m.qn+' 题 '+m.qok+(m.qn? '（'+Math.round(m.qok/m.qn*100)+'%）':'')+'</td>'
+      + '<td>'+m.dn+' 题 '+m.dok+(m.dn? '（'+Math.round(m.dok/m.dn*100)+'%）':'')+'</td>'
+      + '<td><button class="btn sm pri" onclick="startDrillChapter('+m.s+','+m.c+')" '+(m.qn?'':'disabled')+'>刷本章选择题</button> '
+      + '<button class="btn sm" onclick="vChapter('+m.s+','+m.c+')">练本章单元</button></td></tr>';
+  });
+  h += '</table></div>';
+  return h;
+}
+/* ================= v2.8-C 错题清单导出 / 打印 ================= */
+function wrongListMarkdown(withAnalysis){
+  var list = wrongList(), out = [];
+  out.push('# 错题清单（'+list.length+' 题）');
+  out.push('');
+  out.push('- 导出时间：'+new Date().toLocaleString());
+  out.push('');
+  var secs = [], groups = {'选择题':[], '案例题':[], '冲刺手册':[], '专项练习':[]};
+  list.forEach(function(q){
+    if(DB.questions[q]) groups['选择题'].push(q);
+    else if(store.caseRec[q] && store.caseRec[q].m!==undefined) groups['案例题'].push(q);
+    else if(hbItem(q)) groups['冲刺手册'].push(q);
+    else if(drillById(q)) groups['专项练习'].push(q);
+  });
+  Object.keys(groups).forEach(function(name){
+    var g = groups[name]; if(!g.length) return;
+    out.push('## '+name+'（'+g.length+'）'); out.push('');
+    g.forEach(function(k, i){
+      out.push('### '+(i+1)+'. '+k);
+      if(DB.questions[k]){
+        var q = DB.questions[k];
+        out.push('来源：'+q.year+halfName(q.half)+' 第'+q.num+'题');
+        out.push('');
+        out.push(plainText(q.stem) || (q.group && DB.groups[q.group]? '[组题] '+plainText(DB.groups[q.group].stem) : ''));
+        out.push('');
+        (q.options||[]).forEach(function(o){ out.push('- '+o.key+'. '+o.text); });
+        out.push('');
+        out.push('你的答案：'+((store.rec[k]||{}).a || '（未记录）')+'　正确答案：'+(q.answer||'?'));
+        if(withAnalysis && q.analysis){ out.push(''); out.push('解析：'+plainText(q.analysis)); }
+      } else if(store.caseRec[k]){
+        var pp = k.split('#'), c = DB.cases[pp[0]];
+        if(c){ out.push('来源：'+c.year+halfName(c.half)+' 案例'+c.cn+' 问题'+pp[1]);
+          out.push(''); out.push('背景：'+plainText(c.scenario||'').slice(0,300)+'…'); out.push('');
+          var sub = (c.qs||[]).find(function(s){ return s.no==pp[1]; });
+          if(sub){ out.push('问题：'+plainText(sub.text)); if(withAnalysis && sub.answer){ out.push(''); out.push('参考答案：'+plainText(sub.answer)); } } }
+      } else if(hbItem(k)){
+        var hb = hbItem(k);
+        out.push('类型：冲刺手册 · '+(hb.kind==='script'?'话术':(hb.mod||'')));
+        out.push(''); out.push('**'+plainText(hb.q||hb.title||'')+'**');
+        if(withAnalysis) { out.push(''); out.push(plainText(hb.a||hb.html||'')); }
+      } else if(drillById(k)){
+        var o = drillById(k), it = o.item;
+        out.push('所属单元：'+o.uid+(DRILLS[o.uid]&&DRILLS[o.uid].topic? '（'+DRILLS[o.uid].topic+'）':''));
+        if(it.source) out.push('来源：'+it.source);
+        out.push(''); out.push(plainText(it.q));
+        if(it.answerView){ out.push(''); out.push('参考答案：'+it.answerView); }
+        if(withAnalysis && it.detail) out.push(''); out.push('详解：'+it.detail.join(' '));
+      }
+      out.push('');
+    });
+  });
+  return out.join('\n');
+}
+function downloadText(name, text){
+  try{
+    var blob = new Blob([text], {type:'text/markdown;charset=utf-8'});
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = name;
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ URL.revokeObjectURL(a.href); a.remove(); }, 500);
+    toast('已导出 '+name);
+  }catch(e){ toast('导出失败：浏览器不支持'); }
+}
+function vWrongPrint(){
+  var withAna = (store.settings.printAnalysis!==false);
+  var list = wrongList();
+  var h = '<div class="row noprint" style="justify-content:space-between;align-items:center;flex-wrap:wrap">'
+    + '<p class="muted" style="margin:0">打印视图：共 '+list.length+' 题。含解析会更长，可关掉。</p>'
+    + '<div class="row"><label class="muted" style="display:flex;align-items:center;gap:4px"><input type="checkbox" '+(withAna?'checked':'')+' onchange="store.settings.printAnalysis=this.checked;saveSettings();vWrongPrint()"> 含解析</label>'
+    + '<button class="btn pri" onclick="window.print()">🖨 打印 / 导出 PDF</button>'
+    + '<button class="btn" onclick="downloadText(\'错题清单.md\', wrongListMarkdown('+withAna+'))">⬇ 下载 Markdown</button>'
+    + '<button class="btn" onclick="vWrong()">← 返回错题本</button></div></div>'
+    + '<div id="printArea">'+wrongListPrintHTML(withAna)+'</div>';
+  currentView='wrong';
+  view.innerHTML = h;
+  window.scrollTo(0,0);
+}
+function wrongListPrintHTML(withAna){
+  var list = wrongList();
+  var h = '<h1>错题清单（'+list.length+' 题）</h1><p class="muted">导出时间：'+new Date().toLocaleString()+'</p>';
+  var groups = {'选择题':[], '案例题':[], '冲刺手册':[], '专项练习':[]};
+  list.forEach(function(k){
+    if(DB.questions[k]) groups['选择题'].push(k);
+    else if(store.caseRec[k] && store.caseRec[k].m!==undefined) groups['案例题'].push(k);
+    else if(hbItem(k)) groups['冲刺手册'].push(k);
+    else if(drillById(k)) groups['专项练习'].push(k);
+  });
+  var idx = 0;
+  Object.keys(groups).forEach(function(name){
+    var g = groups[name]; if(!g.length) return;
+    h += '<h2>'+name+'（'+g.length+' 题）</h2>';
+    g.forEach(function(k){
+      idx++;
+      if(DB.questions[k]){
+        var q = DB.questions[k], r = store.rec[k]||{};
+        h += '<div class="pr-card" style="page-break-inside:avoid"><b>'+idx+'. '+q.year+halfName(q.half)+' 第'+q.num+'题</b>'
+          + '<div class="qtext" style="margin:6px 0">'+richQ(q.stem||'')+'</div>'
+          + (q.options||[]).map(function(o){ return '<div>'+o.key+'. '+esc(o.text)+(o.key===q.answer? '　<b>← 正确答案</b>':'')+(o.key===r.a? '　<b style="color:var(--ng)">← 你选的</b>':'')+'</div>'; }).join('')
+          + '<div class="muted" style="margin-top:4px">你的答案：'+(r.a||'-')+'　正确答案：'+(q.answer||'?')+'　连对 '+((r.streak)||0)+'/'+wrongMasterN()+'</div>'
+          + (withAna && q.analysis? '<pre>'+esc(plainText(q.analysis))+'</pre>':'')+'</div>';
+      } else if(store.caseRec[k]){
+        var pp=k.split('#'), c=DB.cases[pp[0]], sub=c? (c.qs||[]).find(function(s){ return s.no==pp[1]; }):null;
+        if(!c) return;
+        h += '<div class="pr-card" style="page-break-inside:avoid"><b>'+idx+'. '+c.year+halfName(c.half)+' 案例'+c.cn+' 问题'+pp[1]+'</b>'
+          + '<div class="muted" style="margin-top:4px">'+(c.title? esc(c.title):'')+'（共'+(c.score||'?')+'分）</div>'
+          + (sub? '<div class="qtext" style="margin:6px 0">'+richQ(caseFmt(sub.text))+'</div>' : '')
+          + (withAna && sub && sub.answer? '<pre>'+esc(plainText(sub.answer))+'</pre>':'')+'</div>';
+      } else if(hbItem(k)){
+        var hb = hbItem(k);
+        h += '<div class="pr-card" style="page-break-inside:avoid"><b>'+idx+'. 冲刺手册 · '+(hb.kind==='script'?'话术':esc(hb.mod||''))+'</b>'
+          + '<div class="qtext" style="margin:6px 0">'+sanitize(hb.q||hb.title||'')+'</div>'
+          + (withAna? '<div class="muted">'+sanitize(hb.a||hb.html||'')+'</div>':'')+'</div>';
+      } else if(drillById(k)){
+        var o=drillById(k), it=o.item, r2=store.drills[k]||{};
+        h += '<div class="pr-card" style="page-break-inside:avoid"><b>'+idx+'. 专项练习 · '+esc(o.uid)+' · '+drillTypeName(it.type)+'</b>'
+          + (it.source? ' <span class="muted">'+esc(it.source)+'</span>':'')
+          + '<div class="qtext" style="margin:6px 0">'+sanitize(caseFmt(it.q))+'</div>'
+          + '<div class="muted">参考答案：'+esc(it.answerView||'（见详解）')+'　连对 '+((r2.streak)||0)+'/'+wrongMasterN()+'</div>'
+          + (withAna && it.detail? '<pre>'+esc(it.detail.join('\n'))+'</pre>':'')+'</div>';
+      }
+    });
+  });
+  if(!list.length) h += '<p class="muted">当前没有错题 🎉</p>';
+  return h;
+}
 /* ================= 视图框架 ================= */
 var view = document.getElementById('view');
 var currentView = 'home';
@@ -1659,6 +2049,7 @@ var returnToCase = null;
 document.querySelectorAll('.tab').forEach(function(b){ b.onclick = function(){ if(b.dataset.v==='pm') exam=null; go(b.dataset.v); }; });
 function go(v, arg){
   currentView = v;
+  if(v!=='am' && typeof amPause==='function') amPause();
   document.querySelectorAll('.tab').forEach(function(b){ b.classList.toggle('on', b.dataset.v===v); });
   window.scrollTo(0,0);
   var _e = document.getElementById('errbox'); if(_e){ _e.style.display='none'; _e.textContent=''; }
@@ -2264,7 +2655,9 @@ function unitSprintButtonsHTML(uid){
 var session = null;
 function vAM(arg){
   if(arg && arg.session){ renderSession(); return; }
-  var h = '<div class="card"><h2>上午场 · 选择题刷题 (科目一)</h2>'
+  if(arg && arg.exam){ if(!amExam) amExam = store.amExam; if(!amExam || amExam.done){ vAM(); return; } view.innerHTML = amExamHTML(); amStartTimer(); return; }
+  if(arg && arg.report){ vAmReport(); return; }
+  var h = vAmExamList() + '<div class="card"><h2>上午场 · 选择题刷题 (科目一)</h2>'
     +'<div class="row" style="margin-bottom:10px"><span class="muted">范围:</span>'
     +'<select id="dScope"><option value="all">全部年份</option>';
   DB.papers.filter(p=>p.subject===1).forEach(function(p){ h+='<option value="'+p.id+'">'+p.title+'</option>'; });
@@ -3417,6 +3810,7 @@ function vWrong(){
     + '<button class="btn pri" onclick="startCaseWrongDrill()" '+(cc?'':'disabled')+'>🎯 刷案例错题 ('+wrongDrillN(cc)+'/'+cc+')</button>'
     + '<button class="btn pri" onclick="startHbWrongDrill()" '+(hc?'':'disabled')+'>🃏 刷手册错题 ('+wrongDrillN(hc)+'/'+hc+')</button>'
     + '<button class="btn pri" onclick="startDrillWrongDrill()" '+(dc?'':'disabled')+'>🎯 刷练习错题 ('+wrongDrillN(dc)+'/'+dc+')</button>'
+    + '<button class="btn" onclick="vWrongPrint()">🖨 导出 / 打印错题清单</button>'
     + '</div>'
     + '<p class="muted">只有<b>做错过</b>的题才会进入错题本；在任意模块连对 '+wrongMasterN()+' 次（或点“已掌握”）即可移出。重做不会重置连对。</p>';
   if(!list.length) h+='<p class="muted">空的，继续保持！✨</p>';
@@ -3476,6 +3870,7 @@ function vStats(){
     +'<div class="stat o"><b>'+st.caseWrong+'</b><span>案例待巩固</span></div>'
     +'<div class="stat g"><b>'+st.drillAcc+'%</b><span>练习正确率 ('+st.drillDone+'题)</span></div>'
     +'<div class="stat"><b>'+streak()+'</b><span>连续打卡</span></div></div></div>';
+  h += chapterWeakHTML();
   if(store.exams.length){
     h += '<div class="card"><h2>模拟考成绩</h2><table class="tb"><tr><th>日期</th><th>试卷</th><th>得分</th></tr>';
     store.exams.slice(-10).reverse().forEach(function(e){
