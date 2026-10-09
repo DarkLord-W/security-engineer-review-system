@@ -1,0 +1,10 @@
+# 保持与发布包完全一致的原始字节，不做行尾自动转换
+* -text
+
+# 二进制文件
+*.jpg binary
+*.jpeg binary
+*.png binary
+*.gif binary
+*.zip binary
+*.pdf binary
