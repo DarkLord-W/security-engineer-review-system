@@ -3,9 +3,9 @@
 [![Version](https://img.shields.io/badge/version-v3.0-blue)](CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Edge%20%7C%20Chrome-lightgrey)](#快速开始)
-[![Exam](https://img.shields.io/badge/考试-2026--10--24%20软考中级-orange)](#)
+[![Exam](https://img.shields.io/badge/考试-软考中级·信息安全工程师-orange)](#)
 
-面向 **2026 年下半年软考中级·信息安全工程师**（考试日期 2026-10-24 ~ 10-27）的本地复习工具。
+面向**软考中级·信息安全工程师**的本地复习工具。
 
 纯前端单页应用，无需安装、无需服务器：**双击 `复习系统.html` 即可使用**（推荐 Edge / Chrome）。
 
