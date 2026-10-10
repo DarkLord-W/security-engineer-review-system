@@ -1,7 +1,7 @@
 ﻿# 信息安全工程师复习系统 v3.0
 
 [![Version](https://img.shields.io/badge/version-v3.0-blue)](CHANGELOG.md)
-[![License](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+[![License](https://img.shields.io/badge/license-GPLv3-orange.svg)](LICENSE)
 [![Platform](https://img.shields.io/badge/platform-Edge%20%7C%20Chrome-lightgrey)](#快速开始)
 [![Exam](https://img.shields.io/badge/考试-软考中级·信息安全工程师-orange)](#)
 
@@ -197,7 +197,7 @@
 README.md             本文件
 CHANGELOG.md          完整版本演进记录（v1.0 → v3.0）
 VERSION.txt           版本与数据规模说明
-LICENSE               MIT License
+LICENSE               GPL-3.0 License
 docs/images/          界面配图
 data/
   questions.js         题库（375 选择 + 46 案例/198 问，15 套卷）
@@ -217,12 +217,10 @@ scripts/               数据构建 / 修复 / 审计脚本（开发维护用）
 
 ## 版权声明
 
-- **代码部分**（HTML / JS / CSS / Python 脚本）以 [MIT License](LICENSE) 开源，欢迎学习参考。
-- **题库中的历年真题文本**版权归**中国计算机技术职业资格网 / 全国软考办**所有；**教材正文与插图**版权归**《信息安全工程师教程（第 2 版）》原作者及出版社**所有。
-- 上述内容在仓库中仅作**个人学习备考**用途，请勿用于任何商业用途或二次分发。
+- 本项目以 [GPL-3.0](LICENSE) 协议开源。
+- 请勿用于任何商业用途或二次分发。
 - 若权利人认为本仓库内容侵犯其权益，请联系删除。
 
 ## 致谢
 
-- 题库与教材内容整理自 2016-2025 年软考真题及《信息安全工程师教程（第 2 版）》
 - 版本演进与逐版更新记录见 [CHANGELOG.md](CHANGELOG.md)
